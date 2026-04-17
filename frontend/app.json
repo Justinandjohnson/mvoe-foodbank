@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Food Bank Platform",
+    "slug": "food-bank-platform",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2E7D32"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2E7D32"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "name": "Food Bank Platform",
+      "shortName": "FoodBank",
+      "description": "Transparent food bank donations with AI automation",
+      "startUrl": "/",
+      "display": "standalone",
+      "themeColor": "#2E7D32",
+      "backgroundColor": "#FFFFFF"
+    },
+    "scheme": "food-bank-platform"
+  }
+}

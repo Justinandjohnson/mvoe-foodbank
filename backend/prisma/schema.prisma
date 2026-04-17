@@ -1,0 +1,511 @@
+// Prisma Schema - Phase 1 Foundation
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// PHASE 1: FOUNDATION TABLES
+// ============================================================================
+
+model User {
+  id                   String   @id @default(uuid())
+  email                String   @unique
+  passwordHash         String   @map("password_hash")
+  fullName             String?  @map("full_name")
+  userType             String   @default("donor") @map("user_type") // 'donor', 'volunteer', 'admin'
+  visibilityPreference String   @default("first_name") @map("visibility_preference") // 'full_name', 'first_name', 'anonymous'
+  isVerified           Boolean  @default(false) @map("is_verified")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  donations            Donation[]
+
+  @@map("users")
+}
+
+model Organization {
+  id                 String   @id @default(uuid())
+  name               String
+  type               String   @default("food_bank") // 'food_bank', 'church', 'company'
+  description        String?
+  address            String?
+  city               String?
+  state              String?
+  zipCode            String?  @map("zip_code")
+  phone              String?
+  email              String?
+  website            String?
+  verificationStatus String   @default("pending") @map("verification_status") // 'pending', 'verified', 'rejected'
+  stripeAccountId    String?  @unique @map("stripe_account_id")
+  isActive           Boolean  @default(true) @map("is_active")
+  // Phase 2: Geolocation fields
+  latitude           Float?
+  longitude          Float?
+  hours              String?  // JSON string of operating hours
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  donations          Donation[]
+  ledgerEntries      LedgerEntry[]
+  members            OrganizationMember[]
+  foodNeeds          FoodNeed[]
+  meals              Meal[]
+  status             FoodBankStatus?
+  impactMetrics      ImpactMetric[]
+  receiptPhotos      ReceiptPhoto[]
+
+  @@index([latitude, longitude])
+  @@map("organizations")
+}
+
+model Donation {
+  id               String   @id @default(uuid())
+  donorId          String?  @map("donor_id")
+  organizationId   String   @map("organization_id")
+  amountCents      Int      @map("amount_cents")
+  stripChargeId    String   @unique @map("stripe_charge_id")
+  stripePaymentIntent String? @map("stripe_payment_intent")
+  status           String   @default("succeeded") // 'pending', 'succeeded', 'failed', 'refunded'
+  isRecurring      Boolean  @default(false) @map("is_recurring")
+  recurringInterval String? @map("recurring_interval") // 'monthly', 'quarterly', 'yearly'
+  isAnonymous      Boolean  @default(false) @map("is_anonymous")
+  receiptUrl       String?  @map("receipt_url")
+  taxReceiptSent   Boolean  @default(false) @map("tax_receipt_sent")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  donor            User?           @relation(fields: [donorId], references: [id], onDelete: SetNull)
+  organization     Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ledgerEntries    LedgerEntry[]
+
+  @@index([donorId])
+  @@index([organizationId])
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
+  @@map("donations")
+}
+
+model LedgerEntry {
+  id             String   @id @default(uuid())
+  donationId     String?  @map("donation_id")
+  organizationId String   @map("organization_id")
+  entryType      String   @map("entry_type") // 'FUNDS_CAPTURED', 'FUNDS_SPENT', 'REFUND', 'ADJUSTMENT'
+  amountCents    Int      @map("amount_cents")
+  balanceCents   Int      @map("balance_cents") // Running balance after this entry
+  description    String?
+  category       String?  // 'food', 'delivery', 'overhead', 'equipment'
+  vendor         String?
+  receiptUrl     String?  @map("receipt_url")
+  metadata       Json?    // Flexible field for additional data
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  donation       Donation?     @relation(fields: [donationId], references: [id], onDelete: SetNull)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  detailedExpenses DetailedExpense[]
+  receiptPhotos  ReceiptPhoto[]
+
+  @@index([organizationId])
+  @@index([createdAt(sort: Desc)])
+  @@index([entryType])
+  @@index([category])
+  @@map("ledger_entries")
+}
+
+// ============================================================================
+// SYSTEM TABLES
+// ============================================================================
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  isRevoked Boolean  @default(false) @map("is_revoked")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String   // 'LOGIN', 'DONATION', 'EXPENSE_LOG', 'USER_UPDATE'
+  entityType String? @map("entity_type") // 'user', 'donation', 'organization'
+  entityId  String?  @map("entity_id")
+  details   Json?
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// PHASE 2: FOOD BANK INTEGRATION TABLES
+// ============================================================================
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  organizationId String   @map("organization_id")
+  role           String   @default("staff") // 'admin', 'staff', 'volunteer'
+  permissions    Json?    // Flexible permissions object
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([userId])
+  @@index([organizationId])
+  @@map("organization_members")
+}
+
+model FoodBankStatus {
+  id                  String   @id @default(uuid())
+  organizationId      String   @unique @map("organization_id")
+  waitTimeMinutes     Int?     @map("wait_time_minutes")
+  foodAvailable       String?  @default("unknown") @map("food_available") // 'available', 'low', 'out', 'unknown'
+  capacityPercentage  Int?     @map("capacity_percentage") // 0-100
+  notes               String?
+  lastUpdated         DateTime @default(now()) @map("last_updated")
+  updatedBy           String?  @map("updated_by") // User ID of staff who updated
+  isStale             Boolean  @default(false) @map("is_stale") // Auto-set true after 2 hours
+
+  // Relations
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([lastUpdated])
+  @@map("food_bank_status")
+}
+
+model FoodNeed {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  itemName       String   @map("item_name")
+  quantity       String?  // e.g., "50 lbs", "100 cans"
+  priority       String   @default("medium") // 'urgent', 'high', 'medium', 'low'
+  description    String?
+  isFulfilled    Boolean  @default(false) @map("is_fulfilled")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([priority])
+  @@index([isFulfilled])
+  @@map("food_needs")
+}
+
+model Meal {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  mealName       String   @map("meal_name")
+  mealDate       DateTime @map("meal_date")
+  servings       Int      @default(0)
+  description    String?
+  status         String   @default("planned") // 'planned', 'in_progress', 'completed', 'cancelled'
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  volunteerShifts VolunteerShift[]
+  deliveries     Delivery[]
+
+  @@index([organizationId])
+  @@index([mealDate])
+  @@index([status])
+  @@map("meals")
+}
+
+model VolunteerShift {
+  id          String   @id @default(uuid())
+  mealId      String   @map("meal_id")
+  volunteerId String?  @map("volunteer_id")
+  shiftType   String   @map("shift_type") // 'prep', 'cooking', 'serving', 'cleanup', 'delivery'
+  startTime   DateTime @map("start_time")
+  endTime     DateTime @map("end_time")
+  status      String   @default("open") // 'open', 'filled', 'completed', 'cancelled'
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  meal        Meal     @relation(fields: [mealId], references: [id], onDelete: Cascade)
+
+  @@index([mealId])
+  @@index([volunteerId])
+  @@index([shiftType])
+  @@index([status])
+  @@map("volunteer_shifts")
+}
+
+model Delivery {
+  id               String   @id @default(uuid())
+  mealId           String   @map("meal_id")
+  volunteerId      String?  @map("volunteer_id")
+  recipientName    String?  @map("recipient_name")
+  recipientAddress String   @map("recipient_address")
+  recipientPhone   String?  @map("recipient_phone")
+  deliveryTime     DateTime @map("delivery_time")
+  status           String   @default("scheduled") // 'scheduled', 'in_transit', 'delivered', 'failed'
+  notes            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  meal             Meal     @relation(fields: [mealId], references: [id], onDelete: Cascade)
+
+  @@index([mealId])
+  @@index([volunteerId])
+  @@index([status])
+  @@index([deliveryTime])
+  @@map("deliveries")
+}
+
+// ============================================================================
+// PHASE 3B: COMMUNITY EVENTS & ENHANCED FEATURES
+// ============================================================================
+
+model CommunityEvent {
+  id              String   @id @default(uuid())
+  organizerId     String   @map("organizer_id")
+  eventName       String   @map("event_name")
+  description     String?
+  eventDate       DateTime @map("event_date")
+  startTime       DateTime @map("start_time")
+  endTime         DateTime @map("end_time")
+  location        String?
+  targetServings  Int      @map("target_servings")
+  budgetCents     Int?     @map("budget_cents")
+  status          String   @default("planned") // 'planned', 'active', 'completed', 'cancelled'
+  isPublic        Boolean  @default(true) @map("is_public")
+  maxVolunteers   Int?     @map("max_volunteers")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  volunteers      EventVolunteer[]
+  resources       EventResource[]
+  mealPlan        EventMealPlan?
+  dietaryProfiles EventDietaryProfile[]
+
+  @@index([organizerId])
+  @@index([eventDate])
+  @@index([status])
+  @@index([isPublic])
+  @@map("community_events")
+}
+
+model EventVolunteer {
+  id                String   @id @default(uuid())
+  eventId           String   @map("event_id")
+  volunteerId       String   @map("volunteer_id")
+  volunteerType     String   @map("volunteer_type") // 'cooking', 'setup', 'serving', 'cleanup', 'hosting'
+  capacityOffered   Int?     @map("capacity_offered") // How many people they can help serve
+  availableFrom     DateTime? @map("available_from")
+  availableTo       DateTime? @map("available_to")
+  specialSkills     String?  @map("special_skills")
+  notes             String?
+  status            String   @default("signed_up") // 'signed_up', 'confirmed', 'completed', 'cancelled'
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  event             CommunityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, volunteerId])
+  @@index([eventId])
+  @@index([volunteerId])
+  @@index([volunteerType])
+  @@map("event_volunteers")
+}
+
+model EventResource {
+  id           String   @id @default(uuid())
+  eventId      String   @map("event_id")
+  providerId   String   @map("provider_id")
+  resourceType String   @map("resource_type") // 'venue', 'equipment', 'supplies', 'transportation'
+  resourceName String   @map("resource_name")
+  quantity     String?  // e.g., "1 grill", "tables for 50", "sound system"
+  capacity     Int?     // How many people this resource can serve
+  notes        String?
+  status       String   @default("offered") // 'offered', 'confirmed', 'delivered', 'returned'
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  event        CommunityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
+  @@index([providerId])
+  @@index([resourceType])
+  @@map("event_resources")
+}
+
+model EventMealPlan {
+  id                String   @id @default(uuid())
+  eventId           String   @unique @map("event_id")
+  menuItems         Json     @map("menu_items") // Array of menu items with ingredients
+  shoppingList      Json     @map("shopping_list") // Generated shopping list with quantities
+  nutritionAnalysis Json?    @map("nutrition_analysis") // Nutritional breakdown per serving
+  allergenInfo      Json?    @map("allergen_info") // Allergen warnings and alternatives
+  cookingTimeline   Json?    @map("cooking_timeline") // Step-by-step cooking schedule
+  totalCostCents    Int?     @map("total_cost_cents")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  event             CommunityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@map("event_meal_plans")
+}
+
+model EventDietaryProfile {
+  id                String   @id @default(uuid())
+  eventId           String   @map("event_id")
+  userId            String   @map("user_id")
+  allergies         String[] // Array of allergens
+  dietaryRestrictions String[] @map("dietary_restrictions") // 'vegetarian', 'vegan', 'gluten_free', etc.
+  preferences       String[] // Food preferences
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  event             CommunityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+  @@map("event_dietary_profiles")
+}
+
+// Enhanced Transparency Tables
+model ExpenseCategory {
+  id                String   @id @default(uuid())
+  name              String   @unique
+  description       String?
+  parentCategoryId  String?  @map("parent_category_id")
+  colorCode         String?  @map("color_code") // For UI display
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relations
+  parentCategory    ExpenseCategory? @relation("CategoryHierarchy", fields: [parentCategoryId], references: [id])
+  subCategories     ExpenseCategory[] @relation("CategoryHierarchy")
+  expenses          DetailedExpense[]
+
+  @@index([parentCategoryId])
+  @@map("expense_categories")
+}
+
+model DetailedExpense {
+  id              String   @id @default(uuid())
+  ledgerEntryId   String   @map("ledger_entry_id")
+  categoryId      String   @map("category_id")
+  vendor          String?
+  description     String?
+  amountCents     Int      @map("amount_cents")
+  receiptUrl      String?  @map("receipt_url")
+  tags            String[] // Searchable tags
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  ledgerEntry     LedgerEntry     @relation(fields: [ledgerEntryId], references: [id], onDelete: Cascade)
+  category        ExpenseCategory @relation(fields: [categoryId], references: [id])
+  receiptPhotos   ReceiptPhoto[]
+
+  @@index([ledgerEntryId])
+  @@index([categoryId])
+  @@index([vendor])
+  @@map("detailed_expenses")
+}
+
+model ImpactMetric {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  metricType     String   @map("metric_type") // 'meals_served', 'families_helped', 'pounds_distributed'
+  value          Float
+  period         String   // 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'
+  periodStart    DateTime @map("period_start")
+  periodEnd      DateTime @map("period_end")
+  calculatedAt   DateTime @default(now()) @map("calculated_at")
+  metadata       Json?    // Additional metric details
+
+  // Relations
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, metricType, period, periodStart])
+  @@index([organizationId])
+  @@index([metricType])
+  @@index([period])
+  @@index([calculatedAt])
+  @@map("impact_metrics")
+}
+
+model ReceiptPhoto {
+  id              String   @id @default(uuid())
+  organizationId  String   @map("organization_id")
+  ledgerEntryId   String?  @map("ledger_entry_id")
+  expenseId       String?  @map("expense_id")
+  photoUrl        String   @map("photo_url")
+  thumbnailUrl    String?  @map("thumbnail_url")
+  originalName    String   @map("original_name")
+  fileSize        Int      @map("file_size") // bytes
+  mimeType        String   @map("mime_type")
+  description     String?
+  vendor          String?
+  amountCents     Int?     @map("amount_cents")
+  expenseDate     DateTime? @map("expense_date")
+  tags            String[] // searchable tags
+  isPublic        Boolean  @default(true) @map("is_public") // for transparency
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ledgerEntry     LedgerEntry?    @relation(fields: [ledgerEntryId], references: [id], onDelete: SetNull)
+  detailedExpense DetailedExpense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([ledgerEntryId])
+  @@index([expenseId])
+  @@index([createdAt(sort: Desc)])
+  @@index([isPublic])
+  @@index([vendor])
+  @@map("receipt_photos")
+}
+
+// Nutrition Data Cache
+model NutritionDataCache {
+  id             String   @id @default(uuid())
+  usdaFdcId      String   @unique @map("usda_fdc_id")
+  foodName       String   @map("food_name")
+  nutritionData  Json     @map("nutrition_data") // Complete USDA nutrition profile
+  allergenData   Json?    @map("allergen_data") // Known allergen information
+  lastUpdated    DateTime @default(now()) @map("last_updated")
+
+  @@index([foodName])
+  @@map("nutrition_data_cache")
+}
