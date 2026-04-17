@@ -24,10 +24,10 @@ const configSchema = z.object({
   refreshTokenSecret: z.string().min(32),
   refreshTokenExpiresIn: z.string().default('30d'),
 
-  // Stripe
-  stripeSecretKey: z.string().startsWith('sk_'),
-  stripePublishableKey: z.string().startsWith('pk_'),
-  stripeWebhookSecret: z.string().startsWith('YOUR_STRIPE_WEBHOOK_SECRET').optional(),
+  // Stripe (optional — payment features disabled when not set)
+  stripeSecretKey: z.string().optional(),
+  stripePublishableKey: z.string().optional(),
+  stripeWebhookSecret: z.string().optional(),
 
   // AWS S3
   awsAccessKeyId: z.string().optional(),
