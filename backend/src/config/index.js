@@ -10,18 +10,18 @@ const configSchema = z.object({
   nodeEnv: z.enum(['development', 'production', 'test']).default('development'),
   apiPort: z.coerce.number().default(3000),
   apiHost: z.string().default('localhost'),
-  frontendUrl: z.string().url(),
+  frontendUrl: z.string().url().default('http://localhost:3000'),
 
   // Database
-  databaseUrl: z.string().url(),
+  databaseUrl: z.string().url().default('postgresql://localhost:5432/mvoe'),
 
   // Redis
-  redisUrl: z.string().url(),
+  redisUrl: z.string().url().default('redis://localhost:6379'),
 
   // JWT
-  jwtSecret: z.string().min(32),
+  jwtSecret: z.string().min(32).default('please-set-JWT_SECRET-env-var-min-32-chars!!'),
   jwtExpiresIn: z.string().default('7d'),
-  refreshTokenSecret: z.string().min(32),
+  refreshTokenSecret: z.string().min(32).default('please-set-REFRESH_TOKEN_SECRET-env-var!!'),
   refreshTokenExpiresIn: z.string().default('30d'),
 
   // Stripe (optional — payment features disabled when not set)
