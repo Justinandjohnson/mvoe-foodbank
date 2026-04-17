@@ -1,6 +1,6 @@
 // Frontend Configuration
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
-export const WS_URL = process.env.EXPO_PUBLIC_WS_URL || 'ws://localhost:3000';
+export const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://mvoe-api.onrender.com';
+export const WS_URL = process.env.EXPO_PUBLIC_WS_URL || 'wss://mvoe-api.onrender.com';
 
 export const config = {
   apiUrl: API_URL,
