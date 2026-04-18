@@ -11,7 +11,6 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../contexts/AuthContext';
 import { getActiveAgentJobs } from '../api/agentService';
 
 // Available AI Agents
@@ -31,7 +30,7 @@ const AVAILABLE_AGENTS = [
     description: 'Find best bulk food prices across multiple wholesalers',
     icon: 'pricetag',
     color: '#F59E0B',
-    status: 'coming-soon',
+    status: 'active',
     features: ['Multi-store Search', 'Price Comparison', 'Deal Alerts'],
   },
   {
@@ -40,7 +39,7 @@ const AVAILABLE_AGENTS = [
     description: 'Automatically discover and verify food bank locations',
     icon: 'location',
     color: '#8B5CF6',
-    status: 'coming-soon',
+    status: 'active',
     features: ['Google Maps Search', 'Auto-verification', 'Duplicate Check'],
   },
   {
@@ -49,7 +48,7 @@ const AVAILABLE_AGENTS = [
     description: 'OCR and categorize receipt expenses automatically',
     icon: 'document-text',
     color: '#3B82F6',
-    status: 'coming-soon',
+    status: 'active',
     features: ['OCR', 'Auto-categorize', 'Expense Reports'],
   },
   {
@@ -58,7 +57,7 @@ const AVAILABLE_AGENTS = [
     description: 'Match volunteers with events and optimize schedules',
     icon: 'people',
     color: '#EC4899',
-    status: 'coming-soon',
+    status: 'active',
     features: ['Skill Matching', 'Route Optimization', 'Reminders'],
   },
   {
@@ -67,26 +66,19 @@ const AVAILABLE_AGENTS = [
     description: 'Generate social media posts, newsletters, and flyers',
     icon: 'create',
     color: '#06B6D4',
-    status: 'coming-soon',
+    status: 'active',
     features: ['Social Posts', 'Newsletters', 'Flyers'],
   },
 ];
 
 export default function AgentDashboardScreen({ navigation }) {
-  const { user, isAuthenticated } = useAuth();
-
-  // State
   const [activeJobs, setActiveJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      loadActiveJobs();
-    } else {
-      setLoading(false);
-    }
-  }, [isAuthenticated]);
+    loadActiveJobs();
+  }, []);
 
   const loadActiveJobs = async (isRefresh = false) => {
     try {
@@ -113,21 +105,10 @@ export default function AgentDashboardScreen({ navigation }) {
   };
 
   const handleAgentPress = (agent) => {
-    if (agent.status === 'coming-soon') {
-      Alert.alert('Coming Soon', `${agent.name} will be available soon!`);
-      return;
-    }
-
-    // Navigate to specific agent screen
-    switch (agent.id) {
-      case 'meal-planner':
-        navigation.navigate('Community', {
-          screen: 'MealPlanner',
-        });
-        break;
-      default:
-        Alert.alert('Agent', `${agent.name} is ready to use!`);
-    }
+    navigation.navigate('Community', {
+      screen: 'MealPlanner',
+      params: { agentType: agent.id },
+    });
   };
 
   const getJobStatusColor = (status) => {
@@ -147,12 +128,8 @@ export default function AgentDashboardScreen({ navigation }) {
   const renderAgentCard = (agent) => (
     <TouchableOpacity
       key={agent.id}
-      style={[
-        styles.agentCard,
-        agent.status === 'coming-soon' && styles.agentCardDisabled,
-      ]}
+      style={styles.agentCard}
       onPress={() => handleAgentPress(agent)}
-      disabled={agent.status === 'coming-soon'}
     >
       <View style={[styles.agentIcon, { backgroundColor: agent.color }]}>
         <Ionicons name={agent.icon} size={32} color="white" />
@@ -161,11 +138,6 @@ export default function AgentDashboardScreen({ navigation }) {
       <View style={styles.agentInfo}>
         <View style={styles.agentHeader}>
           <Text style={styles.agentName}>{agent.name}</Text>
-          {agent.status === 'coming-soon' && (
-            <View style={styles.comingSoonBadge}>
-              <Text style={styles.comingSoonText}>Soon</Text>
-            </View>
-          )}
         </View>
 
         <Text style={styles.agentDescription}>{agent.description}</Text>
@@ -179,11 +151,7 @@ export default function AgentDashboardScreen({ navigation }) {
         </View>
       </View>
 
-      <Ionicons
-        name="chevron-forward"
-        size={24}
-        color={agent.status === 'coming-soon' ? '#D1D5DB' : '#6B7280'}
-      />
+      <Ionicons name="chevron-forward" size={24} color="#6B7280" />
     </TouchableOpacity>
   );
 
@@ -232,24 +200,6 @@ export default function AgentDashboardScreen({ navigation }) {
       )}
     </TouchableOpacity>
   );
-
-  if (!isAuthenticated) {
-    return (
-      <View style={styles.centerContainer}>
-        <Ionicons name="lock-closed" size={48} color="#6B7280" />
-        <Text style={styles.authTitle}>Sign In Required</Text>
-        <Text style={styles.authMessage}>
-          Sign in to access AI agents and manage your jobs
-        </Text>
-        <TouchableOpacity
-          style={styles.authButton}
-          onPress={() => navigation.navigate('Auth')}
-        >
-          <Text style={styles.authButtonText}>Sign In</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>

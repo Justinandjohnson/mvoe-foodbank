@@ -1,56 +1,47 @@
-// AI Agent Service - Handles meal planning agent interactions
-import apiClient from './client';
+// AI Agent Service - OpenRouter-powered agents (GLM + Perplexity)
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-/**
- * Start a meal planning agent job
- */
-export const startMealPlannerAgent = async (request) => {
-  try {
-    const response = await apiClient.post('/agents/meal-planner/start', {
-      request
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error starting meal planner:', error);
-    throw error;
+const getKey = () => process.env.EXPO_PUBLIC_OPENROUTER_API_KEY || '';
+
+const openRouterRequest = async (model, messages) => {
+  const key = getKey();
+  if (!key) throw new Error('Missing EXPO_PUBLIC_OPENROUTER_API_KEY');
+
+  const res = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://mvoe.org',
+      'X-Title': 'MVOE Food Bank App',
+    },
+    body: JSON.stringify({ model, messages }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenRouter ${res.status}: ${text}`);
   }
+
+  const data = await res.json();
+  return data.choices[0].message.content;
 };
 
-/**
- * Get agent job status
- */
-export const getAgentJobStatus = async (jobId) => {
-  try {
-    const response = await apiClient.get(`/agents/status/${jobId}`);
-    return response.data;
-  } catch (error) {
-    console.error('Error getting job status:', error);
-    throw error;
-  }
+export const callGLMAgent = (conversationMessages, systemPrompt = '') => {
+  const messages = [
+    ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+    ...conversationMessages,
+  ];
+  return openRouterRequest('thudm/glm-4-plus', messages);
 };
 
-/**
- * Get all active agent jobs
- */
-export const getActiveAgentJobs = async () => {
-  try {
-    const response = await apiClient.get('/agents/active');
-    return response.data;
-  } catch (error) {
-    console.error('Error getting active jobs:', error);
-    throw error;
-  }
-};
+export const searchWithPerplexity = (query) =>
+  openRouterRequest('perplexity/llama-3.1-sonar-large-128k-online', [
+    { role: 'user', content: query },
+  ]);
 
-/**
- * Test USDA API connection
- */
-export const testUSDAConnection = async () => {
-  try {
-    const response = await apiClient.get('/agents/test/usda');
-    return response.data;
-  } catch (error) {
-    console.error('Error testing USDA connection:', error);
-    throw error;
-  }
-};
+// Legacy backend stubs — kept so other imports don't break
+export const startMealPlannerAgent = async () => ({ success: false, error: 'Use callGLMAgent instead' });
+export const getAgentJobStatus = async () => ({});
+export const getActiveAgentJobs = async () => ({ success: true, jobs: [] });
+export const testUSDAConnection = async () => ({});

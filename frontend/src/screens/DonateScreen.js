@@ -11,13 +11,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { organizationService, donationService } from '../api/services';
-import { useAuth } from '../context/AuthContext';
 import StripePaymentForm from '../components/StripePaymentForm';
 
 const AMOUNT_OPTIONS = [10, 25, 50, 100];
 
 export default function DonateScreen({ navigation }) {
-  const { isAuthenticated } = useAuth();
   const [selectedAmount, setSelectedAmount] = useState(25);
   const [customAmount, setCustomAmount] = useState('');
   const [organizations, setOrganizations] = useState([]);
@@ -49,11 +47,6 @@ export default function DonateScreen({ navigation }) {
   };
 
   const handleDonate = async () => {
-    if (!isAuthenticated) {
-      Alert.alert('Login Required', 'Please log in to make a donation');
-      return;
-    }
-
     if (!selectedOrg) {
       Alert.alert('Error', 'Please select an organization');
       return;
@@ -212,12 +205,6 @@ export default function DonateScreen({ navigation }) {
             </Text>
           )}
         </TouchableOpacity>
-
-        {!isAuthenticated && (
-          <Text style={styles.loginHint}>
-            You'll need to log in to complete your donation
-          </Text>
-        )}
 
         {/* Stripe Payment Form */}
         {showPaymentForm && selectedOrg && (
