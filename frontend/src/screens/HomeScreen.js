@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { donationService, organizationService } from '../api/services';
 
-export default function HomeScreen() {
+export default function HomeScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState(null);
@@ -83,16 +83,25 @@ export default function HomeScreen() {
 
       {/* Quick Actions */}
       <View style={styles.quickActions}>
-        <TouchableOpacity style={[styles.actionButton, styles.primaryAction]}>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.primaryAction]}
+          onPress={() => navigation.navigate('Donate')}
+        >
           <Ionicons name="heart" size={24} color="white" />
           <Text style={styles.primaryActionText}>Donate Now</Text>
         </TouchableOpacity>
         <View style={styles.secondaryActions}>
-          <TouchableOpacity style={styles.secondaryAction}>
+          <TouchableOpacity
+            style={styles.secondaryAction}
+            onPress={() => navigation.navigate('Map')}
+          >
             <Ionicons name="location" size={20} color="#10B981" />
             <Text style={styles.secondaryActionText}>Find Food Banks</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryAction}>
+          <TouchableOpacity
+            style={styles.secondaryAction}
+            onPress={() => navigation.navigate('Agents')}
+          >
             <Ionicons name="bar-chart" size={20} color="#10B981" />
             <Text style={styles.secondaryActionText}>View Impact</Text>
           </TouchableOpacity>
@@ -142,7 +151,7 @@ export default function HomeScreen() {
         </Text>
 
         {/* Community Meal Planner Chat */}
-        <TouchableOpacity style={styles.chatCard}>
+        <TouchableOpacity style={styles.chatCard} onPress={() => navigation.navigate('Agents')}>
           <View style={styles.chatHeader}>
             <View style={styles.chatIcon}>
               <Ionicons name="chatbubbles" size={24} color="#8B5CF6" />
@@ -158,7 +167,7 @@ export default function HomeScreen() {
         {/* Agent Grid */}
         <View style={styles.agentGrid}>
           {getAgentCards().map((agent) => (
-            <TouchableOpacity key={agent.id} style={styles.agentCard}>
+            <TouchableOpacity key={agent.id} style={styles.agentCard} onPress={() => navigation.navigate('Agents')}>
               <View style={styles.agentCardHeader}>
                 <Ionicons name={agent.icon} size={20} color={agent.color} />
                 <View style={[styles.agentStatus, { backgroundColor: agent.statusColor }]} />

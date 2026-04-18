@@ -118,17 +118,17 @@ export default function ProfileScreen({ navigation }) {
 
       {/* Options */}
       <View style={styles.options}>
-        <TouchableOpacity style={styles.option}>
+        <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('Donate')}>
           <Text style={styles.optionText}>Donation History</Text>
           <Text style={styles.optionArrow}>→</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.option}>
+        <TouchableOpacity style={styles.option} onPress={() => Alert.alert('Privacy Settings', 'Coming soon')}>
           <Text style={styles.optionText}>Privacy Settings</Text>
           <Text style={styles.optionArrow}>→</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.option}>
+        <TouchableOpacity style={styles.option} onPress={() => Alert.alert('Help & Support', 'Email us at support@mvoe.org')}>
           <Text style={styles.optionText}>Help & Support</Text>
           <Text style={styles.optionArrow}>→</Text>
         </TouchableOpacity>

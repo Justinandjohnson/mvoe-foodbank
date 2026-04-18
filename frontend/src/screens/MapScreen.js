@@ -11,10 +11,11 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Linking } from 'react-native';
 import { organizationService, foodBankService } from '../api/services';
 import FoodBankMap from '../components/FoodBankMap';
 
-export default function MapScreen() {
+export default function MapScreen({ navigation }) {
   const [organizations, setOrganizations] = useState([]);
   const [filteredOrgs, setFilteredOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -319,15 +320,27 @@ export default function MapScreen() {
                 </View>
 
                 <View style={styles.actionButtons}>
-                  <TouchableOpacity style={styles.actionButton}>
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => {
+                      const addr = encodeURIComponent(`${selectedOrg.address}, ${selectedOrg.city}, ${selectedOrg.state}`);
+                      Linking.openURL(`https://maps.google.com/?q=${addr}`);
+                    }}
+                  >
                     <Ionicons name="navigate" size={16} color="#10B981" />
                     <Text style={styles.actionButtonText}>Directions</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.actionButton}>
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => selectedOrg.phone && Linking.openURL(`tel:${selectedOrg.phone}`)}
+                  >
                     <Ionicons name="call" size={16} color="#10B981" />
                     <Text style={styles.actionButtonText}>Call</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.actionButton}>
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => navigation.navigate('Donate')}
+                  >
                     <Ionicons name="heart" size={16} color="#10B981" />
                     <Text style={styles.actionButtonText}>Donate</Text>
                   </TouchableOpacity>
