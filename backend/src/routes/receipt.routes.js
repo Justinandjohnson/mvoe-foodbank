@@ -2,28 +2,12 @@
 import { PrismaClient } from '@prisma/client';
 import { authenticate } from '../middleware/authenticate.js';
 import { validateBody } from '../middleware/validate.js';
-import multer from 'multer';
 import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs/promises';
+import { storeImage } from './images.routes.js';
 
 const prisma = new PrismaClient();
 
-// Configure multer for file upload
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed'), false);
-    }
-  },
-});
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 export default async function receiptRoutes(fastify, options) {
   // Upload receipt photo
@@ -31,42 +15,43 @@ export default async function receiptRoutes(fastify, options) {
     preHandler: [authenticate],
   }, async (request, reply) => {
     try {
-      // Handle multipart form data
-      const data = await request.file();
+      // One pass over the multipart stream collects both the file and the
+      // fields — calling request.file() first would consume it and leave
+      // request.parts() with nothing to read.
+      let buffer = null;
+      let originalName = null;
+      let mimeType = null;
+      const fields = {};
 
-      if (!data) {
+      for await (const part of request.parts()) {
+        if (part.type === 'file') {
+          if (!part.mimetype?.startsWith('image/')) {
+            return reply.code(400).send({
+              success: false,
+              message: 'Only image files are allowed',
+            });
+          }
+
+          buffer = await part.toBuffer();
+          originalName = part.filename;
+          mimeType = part.mimetype;
+        } else {
+          fields[part.fieldname] = part.value;
+        }
+      }
+
+      if (!buffer) {
         return reply.code(400).send({
           success: false,
           message: 'No file uploaded',
         });
       }
 
-      const buffer = await data.file.toBuffer();
-      const originalName = data.filename;
-      const mimeType = data.mimetype;
-      const fileSize = buffer.length;
-
-      // Validate file
-      if (!mimeType.startsWith('image/')) {
-        return reply.code(400).send({
-          success: false,
-          message: 'Only image files are allowed',
-        });
-      }
-
-      if (fileSize > 5 * 1024 * 1024) {
-        return reply.code(400).send({
+      if (buffer.length > MAX_UPLOAD_BYTES) {
+        return reply.code(413).send({
           success: false,
           message: 'File size must be less than 5MB',
         });
-      }
-
-      // Get additional data from form fields
-      const fields = {};
-      for await (const field of request.parts()) {
-        if (!field.file) {
-          fields[field.fieldname] = field.value;
-        }
       }
 
       const {
@@ -88,30 +73,12 @@ export default async function receiptRoutes(fastify, options) {
         });
       }
 
-      // Generate unique filename
-      const timestamp = Date.now();
-      const fileExt = path.extname(originalName) || '.jpg';
-      const filename = `receipt-${timestamp}-${Math.random().toString(36).substr(2, 9)}${fileExt}`;
-      const thumbnailFilename = `thumb-${filename}`;
+      // Bytes go in Postgres, not on disk — Render wipes the filesystem on
+      // every redeploy, which would 404 every receipt already uploaded.
+      const image = await storeImage(buffer);
 
-      // Create uploads directory if it doesn't exist
-      const uploadsDir = path.join(process.cwd(), 'uploads', 'receipts');
-      await fs.mkdir(uploadsDir, { recursive: true });
-
-      // Process and save original image
-      const processedBuffer = await sharp(buffer)
-        .resize(1200, 1200, {
-          fit: 'inside',
-          withoutEnlargement: true
-        })
-        .jpeg({ quality: 85 })
-        .toBuffer();
-
-      const filePath = path.join(uploadsDir, filename);
-      await fs.writeFile(filePath, processedBuffer);
-
-      // Generate thumbnail
       const thumbnailBuffer = await sharp(buffer)
+        .rotate()
         .resize(300, 300, {
           fit: 'inside',
           withoutEnlargement: true
@@ -119,8 +86,14 @@ export default async function receiptRoutes(fastify, options) {
         .jpeg({ quality: 70 })
         .toBuffer();
 
-      const thumbnailPath = path.join(uploadsDir, thumbnailFilename);
-      await fs.writeFile(thumbnailPath, thumbnailBuffer);
+      const thumbnail = await prisma.storedImage.create({
+        data: {
+          data: thumbnailBuffer,
+          mimeType: 'image/jpeg',
+          byteSize: thumbnailBuffer.length,
+        },
+        select: { id: true },
+      });
 
       // Save to database
       const receiptPhoto = await prisma.receiptPhoto.create({
@@ -128,10 +101,10 @@ export default async function receiptRoutes(fastify, options) {
           organizationId,
           ledgerEntryId: ledgerEntryId || null,
           expenseId: expenseId || null,
-          photoUrl: `/uploads/receipts/${filename}`,
-          thumbnailUrl: `/uploads/receipts/${thumbnailFilename}`,
+          photoUrl: `/api/images/${image.id}`,
+          thumbnailUrl: `/api/images/${thumbnail.id}`,
           originalName,
-          fileSize: processedBuffer.length,
+          fileSize: image.byteSize,
           mimeType: 'image/jpeg',
           description: description || null,
           vendor: vendor || null,
@@ -423,19 +396,14 @@ export default async function receiptRoutes(fastify, options) {
         });
       }
 
-      // Delete files from filesystem
-      try {
-        if (existingReceipt.photoUrl) {
-          const filePath = path.join(process.cwd(), existingReceipt.photoUrl);
-          await fs.unlink(filePath);
-        }
-        if (existingReceipt.thumbnailUrl) {
-          const thumbnailPath = path.join(process.cwd(), existingReceipt.thumbnailUrl);
-          await fs.unlink(thumbnailPath);
-        }
-      } catch (fileError) {
-        console.warn('Error deleting files:', fileError);
-        // Continue with database deletion even if file deletion fails
+      // Drop the stored image rows these URLs point at (/api/images/<id>)
+      const imageIds = [existingReceipt.photoUrl, existingReceipt.thumbnailUrl]
+        .filter(Boolean)
+        .map((url) => url.split('/').pop())
+        .filter(Boolean);
+
+      if (imageIds.length > 0) {
+        await prisma.storedImage.deleteMany({ where: { id: { in: imageIds } } });
       }
 
       // Delete from database

@@ -15,8 +15,8 @@ const configSchema = z.object({
   // Database
   databaseUrl: z.string().url().default('postgresql://localhost:5432/mvoe'),
 
-  // Redis
-  redisUrl: z.string().url().default('redis://localhost:6379'),
+  // Redis (optional — in-memory fallback when not set)
+  redisUrl: z.string().optional(),
 
   // JWT
   jwtSecret: z.string().min(32).default('please-set-JWT_SECRET-env-var-min-32-chars!!'),
@@ -38,9 +38,27 @@ const configSchema = z.object({
   // Rate Limiting
   rateLimitWindowMs: z.coerce.number().default(60000),
   rateLimitMaxRequests: z.coerce.number().default(100),
+  allowGuestWrites: z.coerce.boolean().default(false),
 
   // Logging
   logLevel: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+
+  // Food bank directory indexing
+  foodBankDirectoryRegions: z.string().default('Austin,TX'),
+  foodBankDirectoryRunIntervalHours: z.coerce.number().default(168),
+  foodBankDirectorySearchProvider: z.string().default('web'),
+
+  // Meal planner pricing index
+  firecrawlApiKey: z.string().optional(),
+  pricingIndexRefreshIntervalHours: z.coerce.number().default(24),
+  pricingIndexStaleAfterHours: z.coerce.number().default(72),
+
+  // Composio / Google Drive
+  composioApiKey: z.string().optional(),
+
+  // Google auth
+  googleClientIds: z.string().optional(),
+  googleTokenInfoUrl: z.string().url().default('https://oauth2.googleapis.com/tokeninfo'),
 });
 
 // Parse and validate environment variables
@@ -79,9 +97,27 @@ const parseConfig = () => {
       // Rate Limiting
       rateLimitWindowMs: process.env.RATE_LIMIT_WINDOW_MS,
       rateLimitMaxRequests: process.env.RATE_LIMIT_MAX_REQUESTS,
+      allowGuestWrites: process.env.ALLOW_GUEST_WRITES,
 
       // Logging
       logLevel: process.env.LOG_LEVEL,
+
+      // Food bank directory indexing
+      foodBankDirectoryRegions: process.env.FOOD_BANK_DIRECTORY_REGIONS,
+      foodBankDirectoryRunIntervalHours: process.env.FOOD_BANK_DIRECTORY_RUN_INTERVAL_HOURS,
+      foodBankDirectorySearchProvider: process.env.FOOD_BANK_DIRECTORY_SEARCH_PROVIDER,
+
+      // Meal planner pricing index
+      firecrawlApiKey: process.env.FIRECRAWL_API_KEY,
+      pricingIndexRefreshIntervalHours: process.env.PRICING_INDEX_REFRESH_INTERVAL_HOURS,
+      pricingIndexStaleAfterHours: process.env.PRICING_INDEX_STALE_AFTER_HOURS,
+
+      // Composio / Google Drive
+      composioApiKey: process.env.COMPOSIO_API_KEY,
+
+      // Google auth
+      googleClientIds: process.env.GOOGLE_CLIENT_IDS ?? process.env.GOOGLE_CLIENT_ID,
+      googleTokenInfoUrl: process.env.GOOGLE_TOKENINFO_URL,
     });
   } catch (error) {
     console.error('❌ Invalid configuration:', error.errors);
@@ -96,6 +132,68 @@ export const isProduction = () => config.nodeEnv === 'production';
 
 // Helper: Check if running in development
 export const isDevelopment = () => config.nodeEnv === 'development';
+
+const DEFAULT_JWT_SECRET = 'please-set-JWT_SECRET-env-var-min-32-chars!!';
+const DEFAULT_REFRESH_SECRET = 'please-set-REFRESH_TOKEN_SECRET-env-var!!';
+
+function isLocalUrl(value) {
+  return String(value || '').includes('localhost') || String(value || '').includes('127.0.0.1');
+}
+
+export const getProductionReadiness = () => {
+  const checks = [
+    {
+      key: 'nodeEnv',
+      ok: config.nodeEnv === 'production',
+      message: 'NODE_ENV must be production for public deployment.',
+    },
+    {
+      key: 'frontendUrl',
+      ok: Boolean(config.frontendUrl) && !isLocalUrl(config.frontendUrl),
+      message: 'FRONTEND_URL must be the public app URL, not localhost.',
+    },
+    {
+      key: 'databaseUrl',
+      ok: Boolean(config.databaseUrl) && !isLocalUrl(config.databaseUrl),
+      message: 'DATABASE_URL must point to managed production Postgres.',
+    },
+    {
+      key: 'redisUrl',
+      ok: Boolean(config.redisUrl) && !isLocalUrl(config.redisUrl),
+      message: 'REDIS_URL must point to managed production Redis for shared rate limits/queues.',
+    },
+    {
+      key: 'jwtSecret',
+      ok: Boolean(config.jwtSecret) && config.jwtSecret !== DEFAULT_JWT_SECRET,
+      message: 'JWT_SECRET must be unique and not the development default.',
+    },
+    {
+      key: 'refreshTokenSecret',
+      ok: Boolean(config.refreshTokenSecret) && config.refreshTokenSecret !== DEFAULT_REFRESH_SECRET,
+      message: 'REFRESH_TOKEN_SECRET must be unique and not the development default.',
+    },
+    {
+      key: 'guestWrites',
+      ok: config.allowGuestWrites === false,
+      message: 'ALLOW_GUEST_WRITES must stay false in production; public writes require accounts.',
+    },
+  ];
+
+  const failed = checks.filter((check) => !check.ok);
+  return {
+    ready: failed.length === 0,
+    checks,
+    failed,
+  };
+};
+
+if (isProduction()) {
+  const readiness = getProductionReadiness();
+  if (!readiness.ready) {
+    // ponytail: warn but don't exit — demo mode runs in production without all services
+    console.warn('⚠️  Production readiness checks failed (demo mode):', readiness.failed.map(f => f.message));
+  }
+}
 
 // Helper: Check if running in test
 export const isTest = () => config.nodeEnv === 'test';

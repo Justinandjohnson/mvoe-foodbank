@@ -2,6 +2,7 @@
 import ZenClient from '../mcp/zenClient.js';
 import ImageClient from '../mcp/imageClient.js';
 import EmailClient from '../mcp/emailClient.js';
+import { recordAgentActivity } from '../services/agentActivityService.js';
 
 class ContentCreationAgent {
   constructor(socketIo) {
@@ -627,10 +628,19 @@ Return ONLY the JSON array, no markdown, no explanatory text.`;
    * Emit progress updates via WebSocket
    */
   emitProgress(sessionId, message) {
-    this.io.to(sessionId).emit('agent:progress', {
+    const payload = {
       type: 'progress',
+      agentType: 'content-creation',
+      sessionId,
       message,
       timestamp: new Date().toISOString()
+    };
+    this.io.to(sessionId).emit('agent:progress', payload);
+    this.io.emit('agent:progress', payload);
+    recordAgentActivity({
+      action: 'AGENT_PROGRESS',
+      entityId: sessionId,
+      details: { agentType: 'content-creation', message },
     });
   }
 
@@ -638,10 +648,19 @@ Return ONLY the JSON array, no markdown, no explanatory text.`;
    * Emit completion via WebSocket
    */
   emitComplete(sessionId, result) {
-    this.io.to(sessionId).emit('agent:complete', {
+    const payload = {
       type: 'complete',
+      agentType: 'content-creation',
+      sessionId,
       result,
       timestamp: new Date().toISOString()
+    };
+    this.io.to(sessionId).emit('agent:complete', payload);
+    this.io.emit('agent:complete', payload);
+    recordAgentActivity({
+      action: 'AGENT_COMPLETE',
+      entityId: sessionId,
+      details: { agentType: 'content-creation' },
     });
   }
 
@@ -649,10 +668,19 @@ Return ONLY the JSON array, no markdown, no explanatory text.`;
    * Emit error via WebSocket
    */
   emitError(sessionId, error) {
-    this.io.to(sessionId).emit('agent:error', {
+    const payload = {
       type: 'error',
+      agentType: 'content-creation',
+      sessionId,
       error,
       timestamp: new Date().toISOString()
+    };
+    this.io.to(sessionId).emit('agent:error', payload);
+    this.io.emit('agent:error', payload);
+    recordAgentActivity({
+      action: 'AGENT_ERROR',
+      entityId: sessionId,
+      details: { agentType: 'content-creation', error },
     });
   }
 }

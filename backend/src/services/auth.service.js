@@ -1,5 +1,6 @@
 // Authentication Service - JWT and password management
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import { config } from '../config/index.js';
 import prisma from '../utils/database.js';
 import cacheService from '../utils/redis.js';
@@ -10,6 +11,13 @@ import {
 } from '../utils/errors.js';
 
 class AuthService {
+  _googleClientIdSet = new Set(
+    (config.googleClientIds || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+
   /**
    * Hash password
    * @private
@@ -32,9 +40,113 @@ class AuthService {
    */
   _generateTokenPayload(user) {
     return {
+      sub: user.id,
       userId: user.id,
       email: user.email,
       userType: user.userType,
+      // Python coordination services use this claim for tenant-scoped RLS.
+      // Until org membership is unified, a user account owns its own workspace.
+      tenant_id: user.tenantId || user.id,
+    };
+  }
+
+  _getRefreshTokenExpiryDate() {
+    const fallbackDays = 30;
+    const raw = String(config.refreshTokenExpiresIn || '').trim();
+    const match = raw.match(/^(\d+)([smhd])$/i);
+
+    if (!match) {
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + fallbackDays);
+      return expiresAt;
+    }
+
+    const amount = Number.parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+    const multiplierByUnit = {
+      s: 1000,
+      m: 60 * 1000,
+      h: 60 * 60 * 1000,
+      d: 24 * 60 * 60 * 1000,
+    };
+
+    return new Date(Date.now() + amount * multiplierByUnit[unit]);
+  }
+
+  _generateRefreshToken(user, fastify) {
+    return fastify.jwt.sign(
+      {
+        ...this._generateTokenPayload(user),
+        jti: crypto.randomUUID(),
+        tokenType: 'refresh',
+      },
+      {
+        secret: config.refreshTokenSecret,
+        expiresIn: config.refreshTokenExpiresIn,
+      }
+    );
+  }
+
+  async _issueSessionTokens(user, fastify) {
+    const tokenPayload = this._generateTokenPayload(user);
+    const accessToken = fastify.jwt.sign(tokenPayload, {
+      expiresIn: config.jwtExpiresIn,
+    });
+    const refreshToken = this._generateRefreshToken(user, fastify);
+
+    await prisma.refreshToken.create({
+      data: {
+        userId: user.id,
+        token: refreshToken,
+        expiresAt: this._getRefreshTokenExpiryDate(),
+      },
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  async _verifyGoogleIdToken(idToken) {
+    if (!idToken || typeof idToken !== 'string') {
+      throw new AuthenticationError('Google ID token is required');
+    }
+
+    if (!this._googleClientIdSet.size) {
+      throw new AuthenticationError(
+        'Google sign-in is not configured. Set GOOGLE_CLIENT_IDS first.'
+      );
+    }
+
+    const url = new URL(config.googleTokenInfoUrl);
+    url.searchParams.set('id_token', idToken);
+
+    let response;
+    try {
+      response = await fetch(url.toString(), { method: 'GET' });
+    } catch (_error) {
+      throw new AuthenticationError('Google token verification is currently unavailable');
+    }
+
+    if (!response.ok) {
+      throw new AuthenticationError('Google ID token is invalid or expired');
+    }
+
+    const tokenInfo = await response.json();
+
+    if (!tokenInfo?.email || tokenInfo.email_verified !== 'true') {
+      throw new AuthenticationError('Google account email is not verified');
+    }
+
+    if (!tokenInfo.aud || !this._googleClientIdSet.has(tokenInfo.aud)) {
+      throw new AuthenticationError('Google token audience does not match this app');
+    }
+
+    return {
+      email: String(tokenInfo.email).trim().toLowerCase(),
+      fullName: typeof tokenInfo.name === 'string' ? tokenInfo.name.trim() : null,
+      googleSubject: tokenInfo.sub,
     };
   }
 
@@ -44,7 +156,8 @@ class AuthService {
    * @returns {Promise<Object>} Created user
    */
   async register(userData) {
-    const { email, password, fullName, userType } = userData;
+    const { password, fullName, userType } = userData;
+    const email = String(userData.email || '').trim().toLowerCase();
 
     // Check if user already exists
     const existingUser = await prisma.user.findUnique({
@@ -89,13 +202,37 @@ class AuthService {
     return user;
   }
 
+  async registerAndIssueTokens(userData, fastify) {
+    const user = await this.register(userData);
+    const { accessToken, refreshToken } = await this._issueSessionTokens(user, fastify);
+
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'LOGIN',
+        entityType: 'user',
+        entityId: user.id,
+        details: {
+          reason: 'post_register',
+        },
+      },
+    });
+
+    return {
+      user,
+      accessToken,
+      refreshToken,
+    };
+  }
+
   /**
    * Login user
    * @param {Object} credentials - Login credentials
    * @returns {Promise<Object>} User and tokens
    */
   async login(credentials, fastify) {
-    const { email, password } = credentials;
+    const password = credentials.password;
+    const email = String(credentials.email || '').trim().toLowerCase();
 
     // Find user with password hash
     const user = await prisma.user.findUnique({
@@ -125,29 +262,10 @@ class AuthService {
       throw new AuthenticationError('Invalid email or password');
     }
 
-    // Generate tokens
-    const tokenPayload = this._generateTokenPayload(user);
-
-    const accessToken = fastify.jwt.sign(tokenPayload, {
-      expiresIn: config.jwtExpiresIn,
-    });
-
-    const refreshToken = fastify.jwt.sign(tokenPayload, {
-      secret: config.refreshTokenSecret,
-      expiresIn: config.refreshTokenExpiresIn,
-    });
-
-    // Store refresh token
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // 30 days
-
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        token: refreshToken,
-        expiresAt,
-      },
-    });
+    const { accessToken, refreshToken } = await this._issueSessionTokens(
+      user,
+      fastify
+    );
 
     // Log audit
     await prisma.auditLog.create({
@@ -162,6 +280,91 @@ class AuthService {
     // Remove password hash from response
     const { passwordHash, ...userWithoutPassword } = user;
 
+    return {
+      user: userWithoutPassword,
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  async loginWithGoogle(googlePayload, fastify) {
+    const { idToken, userType = 'donor' } = googlePayload;
+    const googleProfile = await this._verifyGoogleIdToken(idToken);
+
+    const normalizedUserType = ['donor', 'volunteer'].includes(userType)
+      ? userType
+      : 'donor';
+
+    let user = await prisma.user.findUnique({
+      where: { email: googleProfile.email },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        fullName: true,
+        userType: true,
+        visibilityPreference: true,
+        isVerified: true,
+      },
+    });
+
+    if (!user) {
+      const generatedPassword = crypto.randomBytes(24).toString('hex');
+      const passwordHash = await this._hashPassword(generatedPassword);
+
+      user = await prisma.user.create({
+        data: {
+          email: googleProfile.email,
+          passwordHash,
+          fullName: googleProfile.fullName || googleProfile.email.split('@')[0],
+          userType: normalizedUserType,
+          isVerified: true,
+        },
+        select: {
+          id: true,
+          email: true,
+          passwordHash: true,
+          fullName: true,
+          userType: true,
+          visibilityPreference: true,
+          isVerified: true,
+        },
+      });
+    } else if (!user.fullName && googleProfile.fullName) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: { fullName: googleProfile.fullName },
+        select: {
+          id: true,
+          email: true,
+          passwordHash: true,
+          fullName: true,
+          userType: true,
+          visibilityPreference: true,
+          isVerified: true,
+        },
+      });
+    }
+
+    const { accessToken, refreshToken } = await this._issueSessionTokens(
+      user,
+      fastify
+    );
+
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'LOGIN_GOOGLE',
+        entityType: 'user',
+        entityId: user.id,
+        details: {
+          provider: 'google',
+          sub: googleProfile.googleSubject,
+        },
+      },
+    });
+
+    const { passwordHash, ...userWithoutPassword } = user;
     return {
       user: userWithoutPassword,
       accessToken,
@@ -220,10 +423,25 @@ class AuthService {
     const accessToken = fastify.jwt.sign(tokenPayload, {
       expiresIn: config.jwtExpiresIn,
     });
+    const nextRefreshToken = this._generateRefreshToken(user, fastify);
+
+    await prisma.$transaction([
+      prisma.refreshToken.update({
+        where: { id: storedToken.id },
+        data: { isRevoked: true },
+      }),
+      prisma.refreshToken.create({
+        data: {
+          userId: user.id,
+          token: nextRefreshToken,
+          expiresAt: this._getRefreshTokenExpiryDate(),
+        },
+      }),
+    ]);
 
     return {
       accessToken,
-      refreshToken,
+      refreshToken: nextRefreshToken,
     };
   }
 

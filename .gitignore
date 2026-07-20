@@ -56,3 +56,7 @@ prisma/migrations/*.sql
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# Env files in every shape — .env alone missed .env.production and backups
+.env.*
+!.env.example

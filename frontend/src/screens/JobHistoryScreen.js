@@ -1,27 +1,61 @@
-// JobHistoryScreen - View all past agent jobs
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getActiveAgentJobs } from '../api/agentService';
+import { getActiveAgentJobs, getAgentActivity } from '../api/agentService';
+import AppScreenBackground from '../components/ui/AppScreenBackground';
+import GlassSurface from '../components/ui/GlassSurface';
+
+function normalizeEntryStatus(entry) {
+  const explicit = entry?.status || entry?.details?.status;
+  if (explicit) return String(explicit).toLowerCase();
+
+  if (String(entry?.action || '').includes('FAILED')) return 'failed';
+  if (String(entry?.action || '').includes('COMPLETED')) return 'completed';
+  return 'info';
+}
+
+function formatActivityTime(value) {
+  if (!value) return 'Pending';
+  return new Date(value).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function getStatusColor(status) {
+  switch (status) {
+    case 'completed':
+      return '#10B981';
+    case 'failed':
+      return '#EF4444';
+    case 'processing':
+    case 'active':
+      return '#F59E0B';
+    default:
+      return '#64748B';
+  }
+}
 
 export default function JobHistoryScreen({ navigation }) {
-  // State
-  const [jobs, setJobs] = useState([]);
+  const [activity, setActivity] = useState([]);
+  const [activeJobs, setActiveJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState('all'); // all, completed, failed
+  const [filter, setFilter] = useState('all');
 
   useEffect(() => {
     loadJobs();
-  }, [filter]);
+  }, []);
 
   const loadJobs = async (isRefresh = false) => {
     try {
@@ -31,214 +65,134 @@ export default function JobHistoryScreen({ navigation }) {
         setLoading(true);
       }
 
-      // TODO: Implement API call to get job history
-      // const response = await getJobHistory({ status: filter });
+      const [activityResponse, activeResponse] = await Promise.all([
+        getAgentActivity(60),
+        getActiveAgentJobs().catch(() => ({ jobs: [] })),
+      ]);
 
-      // Mock data for now
-      const mockJobs = [
-        {
-          id: 'job-1',
-          agentType: 'meal-planner',
-          agentName: 'Community Meal Planner',
-          status: 'completed',
-          startedAt: new Date('2025-10-28T10:00:00'),
-          completedAt: new Date('2025-10-28T10:05:32'),
-          duration: '5m 32s',
-          result: {
-            servings: 100,
-            estimatedCost: 500,
-          },
-        },
-        {
-          id: 'job-2',
-          agentType: 'meal-planner',
-          agentName: 'Community Meal Planner',
-          status: 'completed',
-          startedAt: new Date('2025-10-27T14:30:00'),
-          completedAt: new Date('2025-10-27T14:34:12'),
-          duration: '4m 12s',
-          result: {
-            servings: 50,
-            estimatedCost: 250,
-          },
-        },
-        {
-          id: 'job-3',
-          agentType: 'price-research',
-          agentName: 'Price Research Agent',
-          status: 'failed',
-          startedAt: new Date('2025-10-26T09:15:00'),
-          completedAt: new Date('2025-10-26T09:16:45'),
-          duration: '1m 45s',
-          error: 'Rate limit exceeded',
-        },
-      ];
-
-      // Filter based on selection
-      let filteredJobs = mockJobs;
-      if (filter !== 'all') {
-        filteredJobs = mockJobs.filter((job) => job.status === filter);
-      }
-
-      setJobs(filteredJobs);
+      setActivity(activityResponse.entries || []);
+      setActiveJobs(activeResponse.jobs || []);
     } catch (error) {
-      console.error('Error loading job history:', error);
+      console.error('Error loading agent activity:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const onRefresh = () => {
-    loadJobs(true);
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'completed':
-        return '#10B981';
-      case 'failed':
-        return '#EF4444';
-      default:
-        return '#6B7280';
+  const filteredEntries = useMemo(() => {
+    if (filter === 'live') {
+      return [];
     }
-  };
 
-  const getAgentIcon = (agentType) => {
-    switch (agentType) {
-      case 'meal-planner':
-        return 'restaurant';
-      case 'price-research':
-        return 'pricetag';
-      case 'food-bank-discovery':
-        return 'location';
-      case 'receipt-processor':
-        return 'document-text';
-      default:
-        return 'flash';
+    if (filter === 'all') {
+      return activity;
     }
-  };
 
-  const renderFilterTabs = () => (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterContainer}>
-      {[
-        { key: 'all', label: 'All Jobs' },
-        { key: 'completed', label: 'Completed' },
-        { key: 'failed', label: 'Failed' },
-      ].map((tab) => (
-        <TouchableOpacity
-          key={tab.key}
-          style={[styles.filterTab, filter === tab.key && styles.filterTabActive]}
-          onPress={() => setFilter(tab.key)}
-        >
-          <Text style={[styles.filterTabText, filter === tab.key && styles.filterTabTextActive]}>
-            {tab.label}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  );
-
-  const renderJobCard = (job) => (
-    <TouchableOpacity
-      key={job.id}
-      style={styles.jobCard}
-      onPress={() => {
-        // Navigate to job detail
-        navigation.navigate('JobDetail', { jobId: job.id });
-      }}
-    >
-      <View style={styles.jobHeader}>
-        <View style={[styles.agentIcon, { backgroundColor: getStatusColor(job.status) }]}>
-          <Ionicons name={getAgentIcon(job.agentType)} size={24} color="white" />
-        </View>
-
-        <View style={styles.jobInfo}>
-          <Text style={styles.jobName}>{job.agentName}</Text>
-          <Text style={styles.jobTime}>
-            {job.startedAt.toLocaleDateString()} at {job.startedAt.toLocaleTimeString()}
-          </Text>
-        </View>
-
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(job.status) }]}>
-          <Text style={styles.statusText}>{job.status}</Text>
-        </View>
-      </View>
-
-      <View style={styles.jobDetails}>
-        <View style={styles.detailRow}>
-          <Ionicons name="time-outline" size={16} color="#6B7280" />
-          <Text style={styles.detailText}>Duration: {job.duration}</Text>
-        </View>
-
-        {job.status === 'completed' && job.result && (
-          <>
-            {job.result.servings && (
-              <View style={styles.detailRow}>
-                <Ionicons name="people-outline" size={16} color="#6B7280" />
-                <Text style={styles.detailText}>{job.result.servings} servings</Text>
-              </View>
-            )}
-            {job.result.estimatedCost && (
-              <View style={styles.detailRow}>
-                <Ionicons name="card-outline" size={16} color="#6B7280" />
-                <Text style={styles.detailText}>${job.result.estimatedCost.toFixed(2)}</Text>
-              </View>
-            )}
-          </>
-        )}
-
-        {job.status === 'failed' && job.error && (
-          <View style={styles.errorContainer}>
-            <Ionicons name="alert-circle" size={16} color="#EF4444" />
-            <Text style={styles.errorText}>{job.error}</Text>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
+    return activity.filter((entry) => normalizeEntryStatus(entry) === filter);
+  }, [activity, filter]);
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="white" />
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>Job History</Text>
-          <Text style={styles.headerSubtitle}>{jobs.length} total jobs</Text>
-        </View>
-      </View>
+      <AppScreenBackground />
 
-      {/* Filter Tabs */}
-      {renderFilterTabs()}
-
-      {/* Jobs List */}
       <ScrollView
-        style={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadJobs(true)} />}
       >
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#10B981" />
-            <Text style={styles.loadingText}>Loading jobs...</Text>
+        <GlassSurface preset="dark" style={styles.heroCard} padding={20}>
+          <View style={styles.heroHeader}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={20} color="white" />
+            </TouchableOpacity>
           </View>
-        ) : jobs.length > 0 ? (
-          jobs.map(renderJobCard)
-        ) : (
-          <View style={styles.emptyContainer}>
-            <Ionicons name="folder-open-outline" size={48} color="#D1D5DB" />
-            <Text style={styles.emptyTitle}>No Jobs Found</Text>
-            <Text style={styles.emptyMessage}>
-              {filter === 'all'
-                ? "You haven't run any AI agents yet"
-                : `No ${filter} jobs found`}
-            </Text>
-          </View>
-        )}
+          <Text style={styles.heroTitle}>Agent activity</Text>
+          <Text style={styles.heroBody}>
+            This screen only shows real agent activity and currently running jobs. If there is no logged history yet, it stays empty instead of inventing examples.
+          </Text>
+        </GlassSurface>
 
-        <View style={styles.bottomSpacer} />
+        <GlassSurface style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Filters</Text>
+          <View style={styles.filterRow}>
+            {[
+              { key: 'all', label: 'All' },
+              { key: 'completed', label: 'Completed' },
+              { key: 'failed', label: 'Failed' },
+              { key: 'live', label: 'Live now' },
+            ].map((tab) => {
+              const active = filter === tab.key;
+              return (
+                <TouchableOpacity
+                  key={tab.key}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
+                  onPress={() => setFilter(tab.key)}
+                >
+                  <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </GlassSurface>
+
+        {filter === 'live' ? (
+          <GlassSurface style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Running jobs</Text>
+            {activeJobs.length > 0 ? (
+              activeJobs.map((job) => (
+                <View key={job.jobId} style={styles.entryCard}>
+                  <View style={styles.entryHeader}>
+                    <Text style={styles.entryTitle}>{job.agentType || job.name || 'Agent job'}</Text>
+                    <View style={[styles.statusPill, { backgroundColor: `${getStatusColor(job.status)}16` }]}>
+                      <Text style={[styles.statusPillText, { color: getStatusColor(job.status) }]}>
+                        {job.status || 'active'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.entryBody}>{job.request || 'A background agent job is running.'}</Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.emptyText}>No agent jobs are currently running.</Text>
+            )}
+          </GlassSurface>
+        ) : (
+          <GlassSurface style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Recent logged activity</Text>
+            {loading ? (
+              <View style={styles.loadingBlock}>
+                <ActivityIndicator size="large" color="#10B981" />
+              </View>
+            ) : filteredEntries.length > 0 ? (
+              filteredEntries.map((entry, index) => {
+                const status = normalizeEntryStatus(entry);
+
+                return (
+                  <View key={`${entry.id || entry.entityId || 'activity'}-${index}`} style={styles.entryCard}>
+                    <View style={styles.entryHeader}>
+                      <Text style={styles.entryTitle}>{entry.action || 'Agent event'}</Text>
+                      <View style={[styles.statusPill, { backgroundColor: `${getStatusColor(status)}16` }]}>
+                        <Text style={[styles.statusPillText, { color: getStatusColor(status) }]}>{status}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.entryBody}>
+                      {entry.details?.summary
+                        || entry.details?.message
+                        || entry.entityType
+                        || 'A real activity entry was recorded for this agent action.'}
+                    </Text>
+                    <Text style={styles.entryMeta}>{formatActivityTime(entry.createdAt || entry.created_at)}</Text>
+                  </View>
+                );
+              })
+            ) : (
+              <Text style={styles.emptyText}>No real agent activity has been recorded for this filter yet.</Text>
+            )}
+          </GlassSurface>
+        )}
       </ScrollView>
     </View>
   );
@@ -247,171 +201,126 @@ export default function JobHistoryScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    minHeight: 0,
   },
-
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#10B981',
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-  },
-  backButton: {
-    marginRight: 12,
-  },
-  headerContent: {
+  scroll: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 4,
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.8)',
-  },
-
-  // Filters
-  filterContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'white',
-  },
-  filterTab: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 12,
-  },
-  filterTabActive: {
-    backgroundColor: '#10B981',
-  },
-  filterTabText: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '500',
-  },
-  filterTabTextActive: {
-    color: 'white',
-  },
-
-  // Content
   content: {
-    flex: 1,
+    flexGrow: 1,
+    paddingTop: 58,
+    paddingHorizontal: 16,
+    paddingBottom: 132,
+    gap: 14,
   },
-  loadingContainer: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginTop: 12,
-  },
-  emptyContainer: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#9CA3AF',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyMessage: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-
-  // Job Cards
-  jobCard: {
-    backgroundColor: 'white',
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  jobHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  agentIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  jobInfo: {
-    flex: 1,
-  },
-  jobName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+  heroCard: {
     marginBottom: 2,
   },
-  jobTime: {
-    fontSize: 13,
-    color: '#6B7280',
+  heroHeader: {
+    marginBottom: 12,
   },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+  backButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
+  heroTitle: {
     color: 'white',
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  heroBody: {
+    color: '#D7EAFE',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  sectionCard: {
+    gap: 14,
+  },
+  sectionTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  filterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.52)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.52)',
+  },
+  filterChipActive: {
+    backgroundColor: 'rgba(15,118,110,0.14)',
+    borderColor: 'rgba(15,118,110,0.18)',
+  },
+  filterText: {
+    color: '#64748B',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  filterTextActive: {
+    color: '#0F172A',
+  },
+  entryCard: {
+    backgroundColor: 'rgba(255,255,255,0.52)',
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.52)',
+    gap: 8,
+  },
+  entryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
+  entryTitle: {
+    flex: 1,
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  entryBody: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  entryMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusPill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  statusPillText: {
+    fontSize: 12,
+    fontWeight: '800',
     textTransform: 'capitalize',
   },
-  jobDetails: {
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-    paddingTop: 12,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  detailText: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginLeft: 8,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    padding: 8,
-    borderRadius: 8,
-  },
-  errorText: {
+  emptyText: {
+    color: '#64748B',
     fontSize: 13,
-    color: '#EF4444',
-    marginLeft: 8,
-    flex: 1,
+    fontWeight: '700',
   },
-
-  bottomSpacer: {
-    height: 40,
+  loadingBlock: {
+    paddingVertical: 28,
+    alignItems: 'center',
   },
 });

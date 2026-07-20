@@ -79,7 +79,7 @@ export default function DonateScreen({ navigation }) {
 
       // Navigate to receipt screen
       navigation.navigate('DonationReceipt', {
-        donationId: response.data.id,
+        donationId: response.data.donation.id,
       });
 
       // Reset form
@@ -113,7 +113,7 @@ export default function DonateScreen({ navigation }) {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       <View style={styles.header}>
         <Text style={styles.title}>💚 Make a Donation</Text>
         <Text style={styles.subtitle}>Every dollar makes a difference</Text>
@@ -174,28 +174,34 @@ export default function DonateScreen({ navigation }) {
         {/* Organization Selection */}
         <View style={styles.section}>
           <Text style={styles.label}>Choose Organization</Text>
-          {organizations.map((org) => (
-            <TouchableOpacity
-              key={org.id}
-              style={[
-                styles.orgOption,
-                selectedOrg?.id === org.id && styles.orgOptionSelected,
-              ]}
-              onPress={() => setSelectedOrg(org)}
-            >
-              <Text style={styles.orgName}>{org.name}</Text>
-              <Text style={styles.orgLocation}>
-                {org.city}, {org.state}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {organizations.length > 0 ? (
+            organizations.map((org) => (
+              <TouchableOpacity
+                key={org.id}
+                style={[
+                  styles.orgOption,
+                  selectedOrg?.id === org.id && styles.orgOptionSelected,
+                ]}
+                onPress={() => setSelectedOrg(org)}
+              >
+                <Text style={styles.orgName}>{org.name}</Text>
+                <Text style={styles.orgLocation}>
+                  {org.city}, {org.state}
+                </Text>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <Text style={styles.emptyOrganizationsText}>
+              No verified organizations are available right now.
+            </Text>
+          )}
         </View>
 
         {/* Donate Button */}
         <TouchableOpacity
           style={[styles.donateButton, processing && styles.donateButtonDisabled]}
           onPress={handleDonate}
-          disabled={processing}
+          disabled={processing || !selectedOrg}
         >
           {processing ? (
             <ActivityIndicator color="white" />
@@ -233,7 +239,13 @@ export default function DonateScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     backgroundColor: '#F9FAFB',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 32,
   },
   centerContainer: {
     flex: 1,
@@ -335,6 +347,11 @@ const styles = StyleSheet.create({
   orgLocation: {
     fontSize: 14,
     color: '#6B7280',
+  },
+  emptyOrganizationsText: {
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 20,
   },
   donateButton: {
     backgroundColor: '#10B981',

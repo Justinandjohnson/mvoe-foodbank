@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Food Bank Platform",
-    "slug": "food-bank-platform",
+    "name": "Mvoe",
+    "slug": "mvoe",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,14 +26,22 @@
     "web": {
       "bundler": "metro",
       "favicon": "./assets/favicon.png",
-      "name": "Food Bank Platform",
-      "shortName": "FoodBank",
+      "name": "Mvoe",
+      "shortName": "Mvoe",
       "description": "Transparent food bank donations with AI automation",
       "startUrl": "/",
       "display": "standalone",
       "themeColor": "#2E7D32",
       "backgroundColor": "#FFFFFF"
     },
-    "scheme": "food-bank-platform"
+    "scheme": "mvoe",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Mvoe uses your photos so you can show what food is available."
+        }
+      ]
+    ]
   }
 }

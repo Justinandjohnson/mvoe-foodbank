@@ -1,5 +1,5 @@
 // RegisterScreen - New staff and user registration
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,14 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
 import { useAuth } from '../../contexts/AuthContext';
+import { config } from '../../../config';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const DISABLED_GOOGLE_WEB_CLIENT_ID = 'disabled-google-web-client-id.apps.googleusercontent.com';
 
 export default function RegisterScreen({ navigation }) {
   const [formData, setFormData] = useState({
@@ -21,33 +28,72 @@ export default function RegisterScreen({ navigation }) {
     email: '',
     password: '',
     confirmPassword: '',
-    userType: 'staff', // 'donor', 'staff', 'admin'
+    userType: 'donor',
   });
   const [errors, setErrors] = useState({});
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  const { register, isLoading } = useAuth();
+  const { register, loginWithGoogle, isLoading } = useAuth();
+  const googleConfigured = Boolean(config.googleClientIds.length);
 
-  // Form validation
+  const [googleRequest, googleResponse, promptGoogleSignIn] = Google.useIdTokenAuthRequest({
+    clientId:
+      config.googleExpoClientId ||
+      config.googleWebClientId ||
+      (Platform.OS === 'web' ? DISABLED_GOOGLE_WEB_CLIENT_ID : undefined),
+    expoClientId: config.googleExpoClientId || undefined,
+    webClientId:
+      config.googleWebClientId ||
+      (Platform.OS === 'web' ? DISABLED_GOOGLE_WEB_CLIENT_ID : undefined),
+    iosClientId: config.googleIosClientId || undefined,
+    androidClientId: config.googleAndroidClientId || undefined,
+    selectAccount: true,
+  });
+
+  useEffect(() => {
+    const processGoogleResponse = async () => {
+      if (googleResponse?.type !== 'success') {
+        return;
+      }
+
+      const idToken = googleResponse.params?.id_token;
+      if (!idToken) {
+        Alert.alert('Google Sign-In Failed', 'Google did not return an ID token.');
+        return;
+      }
+
+      setIsGoogleLoading(true);
+      const result = await loginWithGoogle({ idToken, userType: formData.userType });
+      setIsGoogleLoading(false);
+
+      if (result.success) {
+        navigation.navigate('Main');
+        return;
+      }
+
+      Alert.alert('Google Sign-In Failed', result.error || 'Please try again.');
+    };
+
+    processGoogleResponse();
+  }, [formData.userType, googleResponse, loginWithGoogle, navigation]);
+
   const validateForm = () => {
     const newErrors = {};
 
-    // Full name validation
     if (!formData.fullName.trim()) {
       newErrors.fullName = 'Full name is required';
     } else if (formData.fullName.trim().length < 2) {
       newErrors.fullName = 'Full name must be at least 2 characters';
     }
 
-    // Email validation
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required';
     } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
       newErrors.email = 'Please enter a valid email';
     }
 
-    // Password validation
     if (!formData.password) {
       newErrors.password = 'Password is required';
     } else if (formData.password.length < 8) {
@@ -56,14 +102,12 @@ export default function RegisterScreen({ navigation }) {
       newErrors.password = 'Password must contain uppercase, lowercase, and number';
     }
 
-    // Confirm password validation
     if (!formData.confirmPassword) {
       newErrors.confirmPassword = 'Please confirm your password';
     } else if (formData.password !== formData.confirmPassword) {
       newErrors.confirmPassword = 'Passwords do not match';
     }
 
-    // User type validation
     if (!formData.userType) {
       newErrors.userType = 'Please select account type';
     }
@@ -72,23 +116,20 @@ export default function RegisterScreen({ navigation }) {
     return Object.keys(newErrors).length === 0;
   };
 
-  // Handle input changes
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [field]: value,
     }));
 
-    // Clear error when user starts typing
     if (errors[field]) {
-      setErrors(prev => ({
+      setErrors((prev) => ({
         ...prev,
         [field]: undefined,
       }));
     }
   };
 
-  // Handle registration submission
   const handleRegister = async () => {
     if (!validateForm()) {
       return;
@@ -96,31 +137,37 @@ export default function RegisterScreen({ navigation }) {
 
     const registrationData = {
       fullName: formData.fullName.trim(),
-      email: formData.email.trim(),
+      email: formData.email.trim().toLowerCase(),
       password: formData.password,
       userType: formData.userType,
     };
 
     const result = await register(registrationData);
-
-    if (!result.success) {
-      Alert.alert(
-        'Registration Failed',
-        result.error || 'Please check your information and try again.'
-      );
-    } else {
-      Alert.alert(
-        'Success!',
-        'Your account has been created successfully.',
-        [{ text: 'OK' }]
-      );
+    if (result.success) {
+      navigation.navigate('Main');
+      return;
     }
-    // Success navigation is handled by AuthContext
+
+    Alert.alert(
+      'Registration Failed',
+      result.error || 'Please check your information and try again.'
+    );
   };
 
-  // Navigate to login screen
-  const handleLogin = () => {
-    navigation.navigate('Login');
+  const handleGoogleRegister = async () => {
+    if (!config.googleClientIds.length) {
+      Alert.alert(
+        'Google Sign-In Not Configured',
+        'Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (and optional iOS/Android IDs) to enable Google sign-in.',
+      );
+      return;
+    }
+
+    try {
+      await promptGoogleSignIn();
+    } catch (error) {
+      Alert.alert('Google Sign-In Failed', error?.message || 'Unable to start Google sign-in.');
+    }
   };
 
   return (
@@ -129,15 +176,12 @@ export default function RegisterScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer}>
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Join the food bank community</Text>
+          <Text style={styles.subtitle}>Join the food access network</Text>
         </View>
 
-        {/* Registration Form */}
         <View style={styles.form}>
-          {/* Full Name Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Full Name</Text>
             <TextInput
@@ -153,7 +197,6 @@ export default function RegisterScreen({ navigation }) {
             {errors.fullName && <Text style={styles.errorText}>{errors.fullName}</Text>}
           </View>
 
-          {/* Email Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Email Address</Text>
             <TextInput
@@ -170,7 +213,6 @@ export default function RegisterScreen({ navigation }) {
             {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
           </View>
 
-          {/* Account Type Picker */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Account Type</Text>
             <View style={[styles.pickerContainer, errors.userType && styles.inputError]}>
@@ -180,16 +222,13 @@ export default function RegisterScreen({ navigation }) {
                 style={styles.picker}
                 enabled={!isLoading}
               >
-                <Picker.Item label="Food Bank Staff" value="staff" />
                 <Picker.Item label="Donor" value="donor" />
                 <Picker.Item label="Volunteer" value="volunteer" />
-                <Picker.Item label="Administrator" value="admin" />
               </Picker>
             </View>
             {errors.userType && <Text style={styles.errorText}>{errors.userType}</Text>}
           </View>
 
-          {/* Password Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Password</Text>
             <View style={styles.passwordContainer}>
@@ -213,9 +252,7 @@ export default function RegisterScreen({ navigation }) {
                 onPress={() => setShowPassword(!showPassword)}
                 disabled={isLoading}
               >
-                <Text style={styles.passwordToggleText}>
-                  {showPassword ? '👁️' : '🙈'}
-                </Text>
+                <Text style={styles.passwordToggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
               </TouchableOpacity>
             </View>
             {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
@@ -224,7 +261,6 @@ export default function RegisterScreen({ navigation }) {
             </Text>
           </View>
 
-          {/* Confirm Password Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Confirm Password</Text>
             <View style={styles.passwordContainer}>
@@ -249,7 +285,7 @@ export default function RegisterScreen({ navigation }) {
                 disabled={isLoading}
               >
                 <Text style={styles.passwordToggleText}>
-                  {showConfirmPassword ? '👁️' : '🙈'}
+                  {showConfirmPassword ? 'Hide' : 'Show'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -258,36 +294,49 @@ export default function RegisterScreen({ navigation }) {
             )}
           </View>
 
-          {/* Register Button */}
           <TouchableOpacity
             style={[styles.registerButton, isLoading && styles.registerButtonDisabled]}
             onPress={handleRegister}
             disabled={isLoading}
           >
             {isLoading ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
               <Text style={styles.registerButtonText}>Create Account</Text>
             )}
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.googleButton,
+              (isLoading || isGoogleLoading || !googleRequest || !googleConfigured) &&
+                styles.registerButtonDisabled,
+            ]}
+            onPress={handleGoogleRegister}
+            disabled={isLoading || isGoogleLoading || !googleRequest || !googleConfigured}
+          >
+            {isGoogleLoading ? (
+              <ActivityIndicator color="#111827" />
+            ) : (
+              <Text style={styles.googleButtonText}>Continue with Google</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
-        {/* Login Section */}
         <View style={styles.loginSection}>
           <Text style={styles.loginText}>Already have an account?</Text>
           <TouchableOpacity
             style={styles.loginButton}
-            onPress={handleLogin}
+            onPress={() => navigation.navigate('Login')}
             disabled={isLoading}
           >
             <Text style={styles.loginButtonText}>Sign In</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Terms and Privacy */}
         <View style={styles.termsSection}>
           <Text style={styles.termsText}>
-            By creating an account, you agree to our Terms of Service and Privacy Policy
+            By creating an account, you agree to our Terms of Service and Privacy Policy.
           </Text>
         </View>
       </ScrollView>
@@ -333,7 +382,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   input: {
-    backgroundColor: 'white',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D1D5DB',
     borderRadius: 8,
@@ -346,7 +395,7 @@ const styles = StyleSheet.create({
     borderColor: '#EF4444',
   },
   pickerContainer: {
-    backgroundColor: 'white',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#D1D5DB',
     borderRadius: 8,
@@ -358,16 +407,19 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   passwordInput: {
-    paddingRight: 50,
+    paddingRight: 72,
   },
   passwordToggle: {
     position: 'absolute',
-    right: 16,
-    top: 12,
-    padding: 4,
+    right: 12,
+    top: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
   passwordToggleText: {
-    fontSize: 16,
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '600',
   },
   errorText: {
     color: '#EF4444',
@@ -387,10 +439,24 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   registerButtonDisabled: {
-    backgroundColor: '#9CA3AF',
+    opacity: 0.6,
   },
   registerButtonText: {
-    color: 'white',
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  googleButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  googleButtonText: {
+    color: '#111827',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -404,7 +470,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   loginButton: {
-    backgroundColor: 'white',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#10B981',
     borderRadius: 8,

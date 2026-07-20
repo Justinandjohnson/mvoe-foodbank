@@ -9,9 +9,6 @@ import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
 
 // Navigators
-import AuthNavigator from './AuthNavigator';
-import StaffNavigator from './StaffNavigator';
-import CommunityNavigator from './CommunityNavigator';
 import AgentNavigator from './AgentNavigator';
 
 // Screens
@@ -20,9 +17,22 @@ import DonateScreen from '../screens/DonateScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import MapScreen from '../screens/MapScreen';
 import DonationReceiptScreen from '../screens/DonationReceiptScreen';
+import CreateEventScreen from '../screens/CreateEventScreen';
+import EventDetailScreen from '../screens/EventDetailScreen';
+import LoginScreen from '../screens/auth/LoginScreen';
+import RegisterScreen from '../screens/auth/RegisterScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
+
+const baseTabBarStyle = {
+  height: 68,
+  paddingBottom: 10,
+  paddingTop: 8,
+  borderTopColor: 'rgba(255,255,255,0.4)',
+  backgroundColor: 'rgba(248,250,252,0.92)',
+  position: 'absolute',
+};
 
 // Loading screen component
 function LoadingScreen() {
@@ -35,8 +45,6 @@ function LoadingScreen() {
 
 // Main app tabs (for authenticated and guest users)
 function MainTabNavigator() {
-  const { isAuthenticated, user } = useAuth();
-
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -44,59 +52,54 @@ function MainTabNavigator() {
           let iconName;
 
           if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Donate') {
-            iconName = focused ? 'heart' : 'heart-outline';
-          } else if (route.name === 'Community') {
-            iconName = focused ? 'people' : 'people-outline';
-          } else if (route.name === 'Agents') {
-            iconName = focused ? 'flash' : 'flash-outline';
+            iconName = focused ? 'grid' : 'grid-outline';
           } else if (route.name === 'Map') {
-            iconName = focused ? 'map' : 'map-outline';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
-          } else if (route.name === 'Staff') {
-            iconName = focused ? 'briefcase' : 'briefcase-outline';
+            iconName = focused ? 'navigate' : 'navigate-outline';
+          } else if (route.name === 'Settings') {
+            iconName = focused ? 'settings' : 'settings-outline';
           }
 
           return <Ionicons name={iconName} size={size} color={color} />;
         },
         tabBarActiveTintColor: '#10B981',
-        tabBarInactiveTintColor: 'gray',
+        tabBarInactiveTintColor: '#6B7280',
         headerShown: false,
+        tabBarStyle: baseTabBarStyle,
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '600',
+        },
       })}
+      initialRouteName="Map"
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Donate" component={DonateScreen} />
-      <Tab.Screen name="Community" component={CommunityNavigator} />
       <Tab.Screen
-        name="Agents"
-        component={AgentNavigator}
+        name="Map"
+        component={MapScreen}
         options={{
-          title: 'AI Agents',
+          title: 'Find Food',
         }}
       />
-      <Tab.Screen name="Map" component={MapScreen} />
-
-      {/* Show Staff tab only for staff/admin users */}
-      {isAuthenticated && (user?.userType === 'staff' || user?.userType === 'admin') && (
-        <Tab.Screen
-          name="Staff"
-          component={StaffNavigator}
-          options={{
-            title: 'Staff Portal',
-          }}
-        />
-      )}
-
-      <Tab.Screen name="Profile" component={ProfileScreen} />
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{
+          title: 'Command',
+        }}
+      />
+      <Tab.Screen
+        name="Settings"
+        component={ProfileScreen}
+        options={{
+          title: 'Settings',
+        }}
+      />
     </Tab.Navigator>
   );
 }
 
 // Root navigator
 export default function MainNavigator() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isLoading } = useAuth();
 
   // Show loading screen while checking authentication
   if (isLoading) {
@@ -107,6 +110,14 @@ export default function MainNavigator() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {/* Main app screens (available to all users) */}
       <Stack.Screen name="Main" component={MainTabNavigator} />
+
+      <Stack.Screen
+        name="Donate"
+        component={DonateScreen}
+        options={{
+          headerShown: false,
+        }}
+      />
 
       {/* Donation receipt screen */}
       <Stack.Screen
@@ -119,12 +130,43 @@ export default function MainNavigator() {
         }}
       />
 
-      {/* Authentication screens */}
       <Stack.Screen
-        name="Auth"
-        component={AuthNavigator}
+        name="CreateEvent"
+        component={CreateEventScreen}
         options={{
-          gestureEnabled: false,
+          headerShown: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="EventDetail"
+        component={EventDetailScreen}
+        options={{
+          headerShown: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="Agents"
+        component={AgentNavigator}
+        options={{
+          headerShown: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="Login"
+        component={LoginScreen}
+        options={{
+          headerShown: false,
+        }}
+      />
+
+      <Stack.Screen
+        name="Register"
+        component={RegisterScreen}
+        options={{
+          headerShown: false,
         }}
       />
     </Stack.Navigator>

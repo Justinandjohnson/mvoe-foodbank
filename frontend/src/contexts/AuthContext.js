@@ -1,303 +1,281 @@
-// AuthContext - Global authentication state management
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { authService } from '../api/services';
+import { SessionService } from '../services/SessionService';
 import { StorageService } from '../services/StorageService';
 
-// Auth context
 const AuthContext = createContext(null);
 
-// Auth states
-const AUTH_ACTIONS = {
-  LOGIN_START: 'LOGIN_START',
-  LOGIN_SUCCESS: 'LOGIN_SUCCESS',
-  LOGIN_FAILURE: 'LOGIN_FAILURE',
-  LOGOUT: 'LOGOUT',
-  REGISTER_START: 'REGISTER_START',
-  REGISTER_SUCCESS: 'REGISTER_SUCCESS',
-  REGISTER_FAILURE: 'REGISTER_FAILURE',
-  RESTORE_SESSION: 'RESTORE_SESSION',
-  UPDATE_USER: 'UPDATE_USER',
+const ACCESS_TOKEN_KEY = 'accessToken';
+const REFRESH_TOKEN_KEY = 'refreshToken';
+const USER_KEY = 'user';
+
+const getErrorMessage = (error, fallback = 'Request failed. Please try again.') =>
+  error?.response?.data?.error?.message ||
+  error?.response?.data?.message ||
+  error?.response?.data?.error ||
+  error?.message ||
+  fallback;
+
+const isAuthFailure = (error) => {
+  const status = error?.response?.status;
+  return status === 400 || status === 401 || status === 403;
 };
 
-// Initial state
-const initialState = {
-  user: null,
-  accessToken: null,
-  refreshToken: null,
-  isAuthenticated: false,
-  isLoading: true,
-  error: null,
-};
+const parseStoredUser = (serialized) => {
+  if (!serialized) return null;
 
-// Auth reducer
-function authReducer(state, action) {
-  switch (action.type) {
-    case AUTH_ACTIONS.LOGIN_START:
-    case AUTH_ACTIONS.REGISTER_START:
-      return {
-        ...state,
-        isLoading: true,
-        error: null,
-      };
-
-    case AUTH_ACTIONS.LOGIN_SUCCESS:
-    case AUTH_ACTIONS.REGISTER_SUCCESS:
-      return {
-        ...state,
-        user: action.payload.user,
-        accessToken: action.payload.accessToken,
-        refreshToken: action.payload.refreshToken,
-        isAuthenticated: true,
-        isLoading: false,
-        error: null,
-      };
-
-    case AUTH_ACTIONS.LOGIN_FAILURE:
-    case AUTH_ACTIONS.REGISTER_FAILURE:
-      return {
-        ...state,
-        user: null,
-        accessToken: null,
-        refreshToken: null,
-        isAuthenticated: false,
-        isLoading: false,
-        error: action.payload.error,
-      };
-
-    case AUTH_ACTIONS.LOGOUT:
-      return {
-        ...state,
-        user: null,
-        accessToken: null,
-        refreshToken: null,
-        isAuthenticated: false,
-        isLoading: false,
-        error: null,
-      };
-
-    case AUTH_ACTIONS.RESTORE_SESSION:
-      return {
-        ...state,
-        user: action.payload.user,
-        accessToken: action.payload.accessToken,
-        refreshToken: action.payload.refreshToken,
-        isAuthenticated: true,
-        isLoading: false,
-        error: null,
-      };
-
-    case AUTH_ACTIONS.UPDATE_USER:
-      return {
-        ...state,
-        user: { ...state.user, ...action.payload.user },
-      };
-
-    default:
-      return state;
+  try {
+    return JSON.parse(serialized);
+  } catch (_error) {
+    return null;
   }
+};
+
+async function persistAuthSession({ user, accessToken, refreshToken }) {
+  const operations = [];
+  if (accessToken) operations.push(StorageService.setSecureItem(ACCESS_TOKEN_KEY, accessToken));
+  if (refreshToken) operations.push(StorageService.setSecureItem(REFRESH_TOKEN_KEY, refreshToken));
+  if (user) operations.push(StorageService.setItem(USER_KEY, JSON.stringify(user)));
+  await Promise.all(operations);
 }
 
-// AuthProvider component
+async function clearAuthSessionStorage() {
+  await Promise.all([
+    StorageService.removeSecureItem(ACCESS_TOKEN_KEY),
+    StorageService.removeSecureItem(REFRESH_TOKEN_KEY),
+    StorageService.removeItem(USER_KEY),
+  ]);
+}
+
+async function fetchCurrentUser() {
+  const meResponse = await authService.me();
+  return meResponse?.data?.user || null;
+}
+
 export function AuthProvider({ children }) {
-  const [state, dispatch] = useReducer(authReducer, initialState);
+  const [sessionId, setSessionId] = useState(null);
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Restore session on app start
-  useEffect(() => {
-    restoreSession();
-  }, []);
-
-  // Restore session from storage
   const restoreSession = async () => {
-    try {
-      const accessToken = await StorageService.getSecureItem('accessToken');
-      const refreshToken = await StorageService.getSecureItem('refreshToken');
-      const user = await StorageService.getItem('user');
+    const [storedAccessToken, storedRefreshToken, storedUserRaw] = await Promise.all([
+      StorageService.getSecureItem(ACCESS_TOKEN_KEY),
+      StorageService.getSecureItem(REFRESH_TOKEN_KEY),
+      StorageService.getItem(USER_KEY),
+    ]);
 
-      if (accessToken && refreshToken && user) {
-        // Verify token is still valid
-        try {
-          const response = await authService.getCurrentUser(accessToken);
-          dispatch({
-            type: AUTH_ACTIONS.RESTORE_SESSION,
-            payload: {
-              user: response.data.user,
-              accessToken,
-              refreshToken,
-            },
-          });
-        } catch (error) {
-          // Token is invalid, try refresh
-          try {
-            const refreshResponse = await authService.refreshToken(refreshToken);
-            dispatch({
-              type: AUTH_ACTIONS.RESTORE_SESSION,
-              payload: {
-                user: JSON.parse(user),
-                accessToken: refreshResponse.data.accessToken,
-                refreshToken: refreshResponse.data.refreshToken,
-              },
-            });
-          } catch (refreshError) {
-            // Refresh failed, clear session
-            await clearSession();
-          }
-        }
-      } else {
-        dispatch({ type: AUTH_ACTIONS.LOGOUT });
+    const fallbackUser = parseStoredUser(storedUserRaw);
+
+    if (!storedAccessToken && !storedRefreshToken) {
+      return { user: null };
+    }
+
+    try {
+      const currentUser = await fetchCurrentUser();
+      if (currentUser) {
+        await StorageService.setItem(USER_KEY, JSON.stringify(currentUser));
       }
-    } catch (error) {
-      console.error('Session restore error:', error);
-      dispatch({ type: AUTH_ACTIONS.LOGOUT });
+      return { user: currentUser || fallbackUser };
+    } catch (meError) {
+      if (!storedRefreshToken) {
+        if (isAuthFailure(meError)) {
+          await clearAuthSessionStorage();
+          return { user: null };
+        }
+        return { user: fallbackUser };
+      }
+    }
+
+    try {
+      const refreshResponse = await authService.refresh(storedRefreshToken);
+      const refreshedTokens = refreshResponse?.data || {};
+      if (!refreshedTokens.accessToken) {
+        throw new Error('Failed to refresh session');
+      }
+
+      await StorageService.setSecureItem(ACCESS_TOKEN_KEY, refreshedTokens.accessToken);
+      if (refreshedTokens.refreshToken) {
+        await StorageService.setSecureItem(REFRESH_TOKEN_KEY, refreshedTokens.refreshToken);
+      }
+      if (refreshedTokens.user) {
+        await StorageService.setItem(USER_KEY, JSON.stringify(refreshedTokens.user));
+      }
+
+      let currentUser = null;
+      try {
+        currentUser = await fetchCurrentUser();
+      } catch (_fetchUserError) {
+        currentUser = refreshedTokens.user || fallbackUser;
+      }
+      if (currentUser) {
+        await StorageService.setItem(USER_KEY, JSON.stringify(currentUser));
+      }
+
+      return { user: currentUser || fallbackUser };
+    } catch (refreshError) {
+      if (isAuthFailure(refreshError)) {
+        await clearAuthSessionStorage();
+        return { user: null };
+      }
+      return { user: fallbackUser };
     }
   };
 
-  // Login function
-  const login = async (email, password) => {
-    dispatch({ type: AUTH_ACTIONS.LOGIN_START });
+  useEffect(() => {
+    let cancelled = false;
+
+    const initialize = async () => {
+      try {
+        const nextSessionId = await SessionService.ensureSessionId();
+        const restoredAuth = await restoreSession();
+        if (cancelled) return;
+
+        setSessionId(nextSessionId);
+        setUser(restoredAuth.user);
+        setError(null);
+      } catch (startupError) {
+        if (!cancelled) {
+          setError(getErrorMessage(startupError, 'Failed to initialize session.'));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    initialize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const login = async ({ email, password }) => {
+    setError(null);
 
     try {
       const response = await authService.login({ email, password });
-      const { user, accessToken, refreshToken } = response.data;
+      const payload = response?.data || {};
+      if (!payload?.accessToken || !payload?.refreshToken || !payload?.user) {
+        throw new Error('Login response did not include auth tokens');
+      }
 
-      // Store tokens securely
-      await StorageService.setSecureItem('accessToken', accessToken);
-      await StorageService.setSecureItem('refreshToken', refreshToken);
-      await StorageService.setItem('user', JSON.stringify(user));
-
-      dispatch({
-        type: AUTH_ACTIONS.LOGIN_SUCCESS,
-        payload: { user, accessToken, refreshToken },
-      });
+      await persistAuthSession(payload);
+      setUser(payload.user);
 
       return { success: true };
-    } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Login failed';
-      dispatch({
-        type: AUTH_ACTIONS.LOGIN_FAILURE,
-        payload: { error: errorMessage },
-      });
-      return { success: false, error: errorMessage };
+    } catch (loginError) {
+      const message = getErrorMessage(loginError, 'Unable to sign in.');
+      setError(message);
+      return { success: false, error: message };
     }
   };
 
-  // Register function
-  const register = async (userData) => {
-    dispatch({ type: AUTH_ACTIONS.REGISTER_START });
+  const loginWithGoogle = async ({ idToken, userType }) => {
+    setError(null);
 
     try {
-      const response = await authService.register(userData);
-      const { user } = response.data;
+      const response = await authService.googleLogin({ idToken, userType });
+      const payload = response?.data || {};
+      if (!payload?.accessToken || !payload?.refreshToken || !payload?.user) {
+        throw new Error('Google login response did not include auth tokens');
+      }
 
-      // Auto-login after successful registration
-      const loginResult = await login(userData.email, userData.password);
-      if (loginResult.success) {
+      await persistAuthSession(payload);
+      setUser(payload.user);
+
+      return { success: true };
+    } catch (googleError) {
+      const message = getErrorMessage(googleError, 'Google sign-in failed.');
+      setError(message);
+      return { success: false, error: message };
+    }
+  };
+
+  const register = async ({ fullName, email, password, userType }) => {
+    setError(null);
+
+    try {
+      const response = await authService.register({ fullName, email, password, userType });
+      const payload = response?.data || {};
+      if (payload?.accessToken && payload?.refreshToken && payload?.user) {
+        await persistAuthSession(payload);
+        setUser(payload.user);
         return { success: true };
-      } else {
-        return { success: false, error: 'Registration successful, but login failed' };
       }
-    } catch (error) {
-      const errorMessage = error.response?.data?.message || 'Registration failed';
-      dispatch({
-        type: AUTH_ACTIONS.REGISTER_FAILURE,
-        payload: { error: errorMessage },
-      });
-      return { success: false, error: errorMessage };
+      return login({ email, password });
+    } catch (registerError) {
+      const message = getErrorMessage(registerError, 'Unable to create account.');
+      setError(message);
+      return { success: false, error: message };
     }
   };
 
-  // Logout function
   const logout = async () => {
-    try {
-      const refreshToken = await StorageService.getSecureItem('refreshToken');
-      if (refreshToken) {
+    const refreshToken = await StorageService.getSecureItem(REFRESH_TOKEN_KEY);
+
+    if (refreshToken) {
+      try {
         await authService.logout(refreshToken);
+      } catch (_logoutError) {
+        // Continue local logout even if backend revocation fails
       }
-    } catch (error) {
-      console.error('Logout API error:', error);
     }
 
-    await clearSession();
-    dispatch({ type: AUTH_ACTIONS.LOGOUT });
+    await clearAuthSessionStorage();
+    setUser(null);
+    setError(null);
   };
 
-  // Clear session data
-  const clearSession = async () => {
-    await StorageService.removeItem('accessToken');
-    await StorageService.removeItem('refreshToken');
-    await StorageService.removeItem('user');
+  const resetSession = async () => {
+    await logout();
+    const nextSessionId = await SessionService.resetSessionId();
+    setSessionId(nextSessionId);
+    return nextSessionId;
   };
 
-  // Update user data
-  const updateUser = (userData) => {
-    dispatch({
-      type: AUTH_ACTIONS.UPDATE_USER,
-      payload: { user: userData },
-    });
-  };
-
-  // Get fresh access token
-  const getAccessToken = async () => {
-    if (!state.refreshToken) {
-      throw new Error('No refresh token available');
+  const updateUser = async (nextUser) => {
+    setUser(nextUser);
+    if (nextUser) {
+      await StorageService.setItem(USER_KEY, JSON.stringify(nextUser));
+      return;
     }
 
-    try {
-      const response = await authService.refreshToken(state.refreshToken);
-      const { accessToken, refreshToken } = response.data;
-
-      // Update stored tokens
-      await StorageService.setSecureItem('accessToken', accessToken);
-      await StorageService.setSecureItem('refreshToken', refreshToken);
-
-      // Update state
-      dispatch({
-        type: AUTH_ACTIONS.RESTORE_SESSION,
-        payload: {
-          user: state.user,
-          accessToken,
-          refreshToken,
-        },
-      });
-
-      return accessToken;
-    } catch (error) {
-      // Refresh failed, logout user
-      await logout();
-      throw error;
-    }
+    await StorageService.removeItem(USER_KEY);
   };
 
-  // Check if user has specific role
-  const hasRole = (role) => {
-    return state.user?.userType === role;
-  };
+  const isAuthenticated = Boolean(user);
 
-  // Check if user is staff member of organization
-  const isStaffMember = (organizationId) => {
-    // This would need to be implemented with organization member data
-    // For now, return true if user is staff type
-    return state.user?.userType === 'staff' || state.user?.userType === 'admin';
-  };
-
-  const value = {
-    ...state,
-    login,
-    register,
-    logout,
-    updateUser,
-    getAccessToken,
-    hasRole,
-    isStaffMember,
-  };
-
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({
+      user,
+      isAuthenticated,
+      isLoading,
+      error,
+      sessionId,
+      mode: isAuthenticated ? 'authenticated' : 'guest',
+      login,
+      loginWithGoogle,
+      register,
+      logout,
+      resetSession,
+      updateUser,
+      hasRole: (allowedRoles = []) => {
+        if (!user?.userType) return false;
+        if (typeof allowedRoles === 'string') return user.userType === allowedRoles;
+        if (Array.isArray(allowedRoles)) return allowedRoles.includes(user.userType);
+        return false;
+      },
+      isStaffMember: () => user?.userType === 'staff' || user?.userType === 'admin',
+    }),
+    [error, isAuthenticated, isLoading, sessionId, user]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// Custom hook to use auth context
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {

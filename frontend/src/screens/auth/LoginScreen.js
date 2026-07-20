@@ -1,5 +1,5 @@
-// LoginScreen - Staff and user authentication
-import React, { useState } from 'react';
+// LoginScreen - Email/password authentication for donors and staff
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -12,78 +12,122 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
 import { useAuth } from '../../contexts/AuthContext';
+import { config } from '../../../config';
+
+WebBrowser.maybeCompleteAuthSession();
+
+const DISABLED_GOOGLE_WEB_CLIENT_ID = 'disabled-google-web-client-id.apps.googleusercontent.com';
 
 export default function LoginScreen({ navigation }) {
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-  });
-  const [errors, setErrors] = useState({});
-  const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  const { login, isLoading } = useAuth();
+  const { login, loginWithGoogle, isLoading } = useAuth();
 
-  // Form validation
-  const validateForm = () => {
-    const newErrors = {};
-
-    // Email validation
-    if (!formData.email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Please enter a valid email';
-    }
-
-    // Password validation
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const googleConfigured = Boolean(config.googleClientIds.length);
+  const googleAuthConfig = {
+    clientId:
+      config.googleExpoClientId ||
+      config.googleWebClientId ||
+      (Platform.OS === 'web' ? DISABLED_GOOGLE_WEB_CLIENT_ID : undefined),
+    expoClientId: config.googleExpoClientId || undefined,
+    webClientId:
+      config.googleWebClientId ||
+      (Platform.OS === 'web' ? DISABLED_GOOGLE_WEB_CLIENT_ID : undefined),
+    iosClientId: config.googleIosClientId || undefined,
+    androidClientId: config.googleAndroidClientId || undefined,
+    selectAccount: true,
   };
 
-  // Handle input changes
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-    }));
+  const [googleRequest, googleResponse, promptGoogleSignIn] = Google.useIdTokenAuthRequest(googleAuthConfig);
 
-    // Clear error when user starts typing
-    if (errors[field]) {
-      setErrors(prev => ({
-        ...prev,
-        [field]: undefined,
-      }));
+  useEffect(() => {
+    const processGoogleResponse = async () => {
+      if (googleResponse?.type !== 'success') {
+        return;
+      }
+
+      const idToken = googleResponse.params?.id_token;
+      if (!idToken) {
+        Alert.alert('Google Sign-In Failed', 'Google did not return an ID token.');
+        return;
+      }
+
+      setIsGoogleLoading(true);
+      const result = await loginWithGoogle({ idToken });
+      setIsGoogleLoading(false);
+
+      if (result.success) {
+        navigation.navigate('Main');
+        return;
+      }
+
+      Alert.alert('Google Sign-In Failed', result.error || 'Please try again.');
+    };
+
+    processGoogleResponse();
+  }, [googleResponse, loginWithGoogle, navigation]);
+
+  const validate = () => {
+    let valid = true;
+
+    if (!email.trim()) {
+      setEmailError('Email is required');
+      valid = false;
+    } else if (!/\S+@\S+\.\S+/.test(email.trim())) {
+      setEmailError('Enter a valid email address');
+      valid = false;
     }
+
+    if (!password) {
+      setPasswordError('Password is required');
+      valid = false;
+    }
+
+    return valid;
   };
 
-  // Handle login submission
   const handleLogin = async () => {
-    if (!validateForm()) {
+    setEmailError('');
+    setPasswordError('');
+
+    if (!validate()) {
       return;
     }
 
-    const result = await login(formData.email.trim(), formData.password);
+    const result = await login({
+      email: email.trim().toLowerCase(),
+      password,
+    });
 
-    if (!result.success) {
-      Alert.alert('Login Failed', result.error || 'Please check your credentials and try again.');
+    if (result.success) {
+      navigation.navigate('Main');
+      return;
     }
-    // Success is handled by AuthContext - user will be navigated automatically
+
+    Alert.alert('Sign In Failed', result.error || 'Please check your email and password.');
   };
 
-  // Navigate to register screen
-  const handleRegister = () => {
-    navigation.navigate('Register');
-  };
+  const handleGoogleLogin = async () => {
+    if (!config.googleClientIds.length) {
+      Alert.alert(
+        'Google Sign-In Not Configured',
+        'Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID (and optional iOS/Android IDs) to enable Google sign-in.',
+      );
+      return;
+    }
 
-  // Guest access (skip login)
-  const handleGuestAccess = () => {
-    navigation.navigate('Main');
+    try {
+      await promptGoogleSignIn();
+    } catch (error) {
+      Alert.alert('Google Sign-In Failed', error?.message || 'Unable to start Google sign-in.');
+    }
   };
 
   return (
@@ -92,21 +136,23 @@ export default function LoginScreen({ navigation }) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer}>
-        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to manage your food bank</Text>
+          <Text style={styles.title}>Sign In</Text>
+          <Text style={styles.subtitle}>
+            Use your MVOE email and password to continue
+          </Text>
         </View>
 
-        {/* Login Form */}
         <View style={styles.form}>
-          {/* Email Input */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email Address</Text>
+            <Text style={styles.label}>Email</Text>
             <TextInput
-              style={[styles.input, errors.email && styles.inputError]}
-              value={formData.email}
-              onChangeText={(value) => handleInputChange('email', value)}
+              style={[styles.input, emailError && styles.inputError]}
+              value={email}
+              onChangeText={(value) => {
+                setEmail(value);
+                setEmailError('');
+              }}
               placeholder="Enter your email"
               placeholderTextColor="#9CA3AF"
               keyboardType="email-address"
@@ -114,83 +160,75 @@ export default function LoginScreen({ navigation }) {
               autoCorrect={false}
               editable={!isLoading}
             />
-            {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+            {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
           </View>
 
-          {/* Password Input */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Password</Text>
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.passwordInput,
-                  errors.password && styles.inputError,
-                ]}
-                value={formData.password}
-                onChangeText={(value) => handleInputChange('password', value)}
-                placeholder="Enter your password"
-                placeholderTextColor="#9CA3AF"
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isLoading}
-              />
-              <TouchableOpacity
-                style={styles.passwordToggle}
-                onPress={() => setShowPassword(!showPassword)}
-                disabled={isLoading}
-              >
-                <Text style={styles.passwordToggleText}>
-                  {showPassword ? '👁️' : '🙈'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
+            <TextInput
+              style={[styles.input, passwordError && styles.inputError]}
+              value={password}
+              onChangeText={(value) => {
+                setPassword(value);
+                setPasswordError('');
+              }}
+              placeholder="Enter your password"
+              placeholderTextColor="#9CA3AF"
+              secureTextEntry
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!isLoading}
+            />
+            {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
           </View>
 
-          {/* Login Button */}
           <TouchableOpacity
-            style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
+            style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={isLoading}
+            accessibilityRole="button"
+            accessibilityLabel="Submit sign in"
           >
             {isLoading ? (
               <ActivityIndicator color="white" />
             ) : (
-              <Text style={styles.loginButtonText}>Sign In</Text>
+              <Text style={styles.primaryButtonText}>Sign In</Text>
             )}
-          </TouchableOpacity>
-
-          {/* Forgot Password */}
-          <TouchableOpacity style={styles.forgotPassword} disabled={isLoading}>
-            <Text style={styles.forgotPasswordText}>Forgot your password?</Text>
           </TouchableOpacity>
         </View>
 
-        {/* Divider */}
+        <TouchableOpacity
+          style={[
+            styles.googleButton,
+            (isLoading || isGoogleLoading || !googleRequest || !googleConfigured) &&
+              styles.buttonDisabled,
+          ]}
+          onPress={handleGoogleLogin}
+          disabled={isLoading || isGoogleLoading || !googleRequest || !googleConfigured}
+        >
+          {isGoogleLoading ? (
+            <ActivityIndicator color="#111827" />
+          ) : (
+            <Text style={styles.googleButtonText}>Continue with Google</Text>
+          )}
+        </TouchableOpacity>
+
+        <View style={styles.secondarySection}>
+          <Text style={styles.secondaryText}>Need an account?</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Register')} disabled={isLoading}>
+            <Text style={styles.linkText}>Create Account</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
           <Text style={styles.dividerText}>or</Text>
           <View style={styles.dividerLine} />
         </View>
 
-        {/* Register Section */}
-        <View style={styles.registerSection}>
-          <Text style={styles.registerText}>Don't have an account?</Text>
-          <TouchableOpacity
-            style={styles.registerButton}
-            onPress={handleRegister}
-            disabled={isLoading}
-          >
-            <Text style={styles.registerButtonText}>Create Account</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Guest Access */}
         <TouchableOpacity
           style={styles.guestButton}
-          onPress={handleGuestAccess}
+          onPress={() => navigation.navigate('Main')}
           disabled={isLoading}
         >
           <Text style={styles.guestButtonText}>Continue as Guest</Text>
@@ -224,12 +262,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7280',
     textAlign: 'center',
+    lineHeight: 22,
   },
   form: {
     marginBottom: 24,
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 12,
   },
   label: {
     fontSize: 14,
@@ -250,48 +289,52 @@ const styles = StyleSheet.create({
   inputError: {
     borderColor: '#EF4444',
   },
-  passwordContainer: {
-    position: 'relative',
-  },
-  passwordInput: {
-    paddingRight: 50,
-  },
-  passwordToggle: {
-    position: 'absolute',
-    right: 16,
-    top: 12,
-    padding: 4,
-  },
-  passwordToggleText: {
-    fontSize: 16,
-  },
   errorText: {
     color: '#EF4444',
     fontSize: 12,
-    marginTop: 4,
+    marginTop: 6,
   },
-  loginButton: {
+  primaryButton: {
     backgroundColor: '#10B981',
-    borderRadius: 8,
     paddingVertical: 14,
+    borderRadius: 8,
     alignItems: 'center',
     marginTop: 8,
   },
-  loginButtonDisabled: {
-    backgroundColor: '#9CA3AF',
+  buttonDisabled: {
+    opacity: 0.6,
   },
-  loginButtonText: {
+  primaryButtonText: {
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
   },
-  forgotPassword: {
+  googleButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    paddingVertical: 14,
+    borderRadius: 8,
     alignItems: 'center',
-    marginTop: 16,
+    marginBottom: 18,
   },
-  forgotPasswordText: {
-    color: '#10B981',
+  googleButtonText: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  secondarySection: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  secondaryText: {
     fontSize: 14,
+    color: '#6B7280',
+  },
+  linkText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#10B981',
   },
   divider: {
     flexDirection: 'row',
@@ -304,31 +347,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#E5E7EB',
   },
   dividerText: {
-    color: '#6B7280',
-    paddingHorizontal: 16,
-    fontSize: 14,
-  },
-  registerSection: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  registerText: {
-    color: '#6B7280',
-    fontSize: 14,
-    marginBottom: 8,
-  },
-  registerButton: {
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#10B981',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  registerButtonText: {
-    color: '#10B981',
-    fontSize: 14,
-    fontWeight: '600',
+    marginHorizontal: 12,
+    color: '#9CA3AF',
+    fontSize: 12,
+    textTransform: 'uppercase',
   },
   guestButton: {
     alignItems: 'center',
@@ -336,7 +358,7 @@ const styles = StyleSheet.create({
   },
   guestButtonText: {
     color: '#6B7280',
-    fontSize: 14,
-    textDecorationLine: 'underline',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });

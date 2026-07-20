@@ -1,4 +1,5 @@
 // Auth Routes - Authentication endpoints
+import { z } from 'zod';
 import authService from '../services/auth.service.js';
 import { validateBody } from '../middleware/validate.js';
 import { authenticate } from '../middleware/authenticate.js';
@@ -9,6 +10,11 @@ import {
   changePasswordSchema,
 } from '../utils/validators.js';
 
+const googleLoginSchema = z.object({
+  idToken: z.string().min(1, 'Google ID token is required'),
+  userType: z.enum(['donor', 'volunteer']).optional(),
+});
+
 export default async function authRoutes(fastify) {
   // Register new user
   fastify.post(
@@ -17,11 +23,11 @@ export default async function authRoutes(fastify) {
       preHandler: [validateBody(signupSchema)],
     },
     async (request, reply) => {
-      const user = await authService.register(request.body);
+      const result = await authService.registerAndIssueTokens(request.body, fastify);
 
       return reply.status(201).send({
         success: true,
-        data: { user },
+        data: result,
         message: 'Account created successfully',
       });
     }
@@ -62,11 +68,28 @@ export default async function authRoutes(fastify) {
     }
   );
 
+  // Google ID token login
+  fastify.post(
+    '/google',
+    {
+      preHandler: [validateBody(googleLoginSchema)],
+    },
+    async (request, reply) => {
+      const result = await authService.loginWithGoogle(request.body, fastify);
+
+      return reply.send({
+        success: true,
+        data: result,
+        message: 'Google login successful',
+      });
+    }
+  );
+
   // Logout
   fastify.post(
     '/logout',
     {
-      preHandler: [authenticate, validateBody(refreshTokenSchema)],
+      preHandler: [validateBody(refreshTokenSchema)],
     },
     async (request, reply) => {
       const { refreshToken } = request.body;

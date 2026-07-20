@@ -1,24 +1,168 @@
 // Community Events Routes - Phase 3B
-import { PrismaClient } from '@prisma/client';
-import { authenticate } from '../middleware/authenticate.js';
+import { getPrismaClient } from '../utils/database.js';
+import { actorOwnsRecord, buildActorLookup, optionalActor, requireActor } from '../middleware/actor.js';
 import { validateBody } from '../middleware/validate.js';
-import { createEventSchema, volunteerSignupSchema, resourceOfferSchema } from '../utils/validators.js';
+import {
+  createEventSchema,
+  dietaryProfileSchema,
+  mealPlanSchema,
+  resourceOfferSchema,
+  updateEventSchema,
+  volunteerSignupSchema,
+} from '../utils/validators.js';
 
-const prisma = new PrismaClient();
+const prisma = getPrismaClient();
+const MAX_RESOURCE_OFFERS_PER_ACTOR_PER_EVENT = 5;
+
+const EVENT_OWNER_FIELDS = {
+  userField: 'organizerId',
+  sessionField: 'organizerSessionId',
+};
+
+const VOLUNTEER_OWNER_FIELDS = {
+  userField: 'volunteerId',
+  sessionField: 'volunteerSessionId',
+};
+
+const RESOURCE_OWNER_FIELDS = {
+  userField: 'providerId',
+  sessionField: 'providerSessionId',
+};
+
+const DIETARY_OWNER_FIELDS = {
+  userField: 'userId',
+  sessionField: 'sessionId',
+};
+
+function serializeEventForActor(event, actor) {
+  if (!event) return event;
+
+  const { organizerSessionId, ...safeEvent } = event;
+  const volunteers = Array.isArray(event.volunteers) ? event.volunteers : [];
+  const resources = Array.isArray(event.resources) ? event.resources : [];
+  const dietaryProfiles = Array.isArray(event.dietaryProfiles) ? event.dietaryProfiles : [];
+
+  return {
+    ...safeEvent,
+    isOwnedByCurrentActor: actorOwnsRecord(actor, event, EVENT_OWNER_FIELDS),
+    currentActorIsVolunteer: volunteers.some((volunteer) => actorOwnsRecord(actor, volunteer, VOLUNTEER_OWNER_FIELDS)),
+    currentActorOfferedResource: resources.some((resource) => actorOwnsRecord(actor, resource, RESOURCE_OWNER_FIELDS)),
+    volunteers: volunteers.map(({ volunteerSessionId, ...volunteer }) => volunteer),
+    resources: resources.map(({ providerSessionId, ...resource }) => resource),
+    dietaryProfiles: dietaryProfiles.map(({ sessionId, ...profile }) => profile),
+  };
+}
+
+function serializeVolunteer(volunteer) {
+  if (!volunteer) return volunteer;
+  const { volunteerSessionId, ...safeVolunteer } = volunteer;
+  return safeVolunteer;
+}
+
+function serializeResource(resource) {
+  if (!resource) return resource;
+  const { providerSessionId, ...safeResource } = resource;
+  return safeResource;
+}
+
+function serializeDietaryProfile(profile) {
+  if (!profile) return profile;
+  const { sessionId, ...safeProfile } = profile;
+  return safeProfile;
+}
+
+async function writeCommunityAudit(request, action, entityType, entityId, details = {}) {
+  await prisma.auditLog.create({
+    data: {
+      userId: request.actor?.userId || null,
+      action,
+      entityType,
+      entityId,
+      ipAddress: request.ip || null,
+      userAgent: request.headers['user-agent'] || null,
+      details: {
+        ...details,
+        actorType: request.actor?.actorType || 'unknown',
+        sessionId: request.actor?.sessionId || null,
+      },
+    },
+  });
+}
+
+function canPublicActorWriteEvent(actor, event) {
+  return event?.isPublic || actorOwnsRecord(actor, event, EVENT_OWNER_FIELDS);
+}
+
+function getVolunteerLookup(eventId, actor) {
+  if (actor?.userId) {
+    return {
+      eventId_volunteerId: {
+        eventId,
+        volunteerId: actor.userId,
+      },
+    };
+  }
+
+  if (actor?.sessionId) {
+    return {
+      eventId_volunteerSessionId: {
+        eventId,
+        volunteerSessionId: actor.sessionId,
+      },
+    };
+  }
+
+  return null;
+}
+
+function getResourceActorFilter(eventId, actor) {
+  const lookup = buildActorLookup(actor, RESOURCE_OWNER_FIELDS);
+  if (!lookup) return null;
+
+  return {
+    eventId,
+    ...lookup,
+  };
+}
+
+function getDietaryLookup(eventId, actor) {
+  if (actor?.userId) {
+    return {
+      eventId_userId: {
+        eventId,
+        userId: actor.userId,
+      },
+    };
+  }
+
+  if (actor?.sessionId) {
+    return {
+      eventId_sessionId: {
+        eventId,
+        sessionId: actor.sessionId,
+      },
+    };
+  }
+
+  return null;
+}
 
 export default async function communityRoutes(fastify, options) {
   // Create new community event
   fastify.post('/community-events/create', {
-    preHandler: [authenticate, validateBody(createEventSchema)],
+    preHandler: [requireActor, validateBody(createEventSchema)],
   }, async (request, reply) => {
     try {
       const {
         eventName,
+        eventType,
         description,
         eventDate,
         startTime,
         endTime,
         location,
+        latitude,
+        longitude,
         targetServings,
         budgetCents,
         isPublic,
@@ -27,13 +171,17 @@ export default async function communityRoutes(fastify, options) {
 
       const event = await prisma.communityEvent.create({
         data: {
-          organizerId: request.user.id,
+          organizerId: request.actor?.userId || null,
+          organizerSessionId: request.actor?.sessionId || null,
           eventName,
+          eventType,
           description,
           eventDate: new Date(eventDate),
           startTime: new Date(startTime),
           endTime: new Date(endTime),
           location,
+          latitude,
+          longitude,
           targetServings,
           budgetCents,
           isPublic,
@@ -46,10 +194,16 @@ export default async function communityRoutes(fastify, options) {
         },
       });
 
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_CREATE', 'community_event', event.id, {
+        eventType: event.eventType,
+        isPublic: event.isPublic,
+        targetServings: event.targetServings,
+      });
+
       reply.code(201).send({
         success: true,
         message: 'Community event created successfully',
-        data: { event },
+        data: { event: serializeEventForActor(event, request.actor) },
       });
     } catch (error) {
       console.error('Error creating community event:', error);
@@ -62,15 +216,17 @@ export default async function communityRoutes(fastify, options) {
   });
 
   // Get all public community events (with optional filters)
-  fastify.get('/community-events', async (request, reply) => {
+  fastify.get('/community-events', { preHandler: [optionalActor] }, async (request, reply) => {
     try {
       const {
-        limit = 20,
-        offset = 0,
+        limit: rawLimit = 20,
+        offset: rawOffset = 0,
         status = 'all',
         upcoming = false,
         organizerId,
       } = request.query;
+      const limit = Math.min(Math.max(parseInt(rawLimit, 10) || 20, 1), 100);
+      const offset = Math.max(parseInt(rawOffset, 10) || 0, 0);
 
       const whereClause = {
         isPublic: true,
@@ -96,6 +252,8 @@ export default async function communityRoutes(fastify, options) {
           volunteers: {
             select: {
               id: true,
+              volunteerId: true,
+              volunteerSessionId: true,
               volunteerType: true,
               status: true,
             },
@@ -103,6 +261,8 @@ export default async function communityRoutes(fastify, options) {
           resources: {
             select: {
               id: true,
+              providerId: true,
+              providerSessionId: true,
               resourceType: true,
               resourceName: true,
               status: true,
@@ -119,8 +279,8 @@ export default async function communityRoutes(fastify, options) {
         orderBy: {
           eventDate: 'asc',
         },
-        take: parseInt(limit),
-        skip: parseInt(offset),
+        take: limit,
+        skip: offset,
       });
 
       const totalCount = await prisma.communityEvent.count({
@@ -130,12 +290,12 @@ export default async function communityRoutes(fastify, options) {
       reply.send({
         success: true,
         data: {
-          events,
+          events: events.map((event) => serializeEventForActor(event, request.actor)),
           pagination: {
             total: totalCount,
-            limit: parseInt(limit),
-            offset: parseInt(offset),
-            hasMore: totalCount > parseInt(offset) + parseInt(limit),
+            limit,
+            offset,
+            hasMore: totalCount > offset + limit,
           },
         },
       });
@@ -150,7 +310,7 @@ export default async function communityRoutes(fastify, options) {
   });
 
   // Get specific event details
-  fastify.get('/community-events/:id', async (request, reply) => {
+  fastify.get('/community-events/:id', { preHandler: [optionalActor] }, async (request, reply) => {
     try {
       const { id } = request.params;
 
@@ -161,6 +321,7 @@ export default async function communityRoutes(fastify, options) {
             select: {
               id: true,
               volunteerId: true,
+              volunteerSessionId: true,
               volunteerType: true,
               capacityOffered: true,
               availableFrom: true,
@@ -174,6 +335,7 @@ export default async function communityRoutes(fastify, options) {
             select: {
               id: true,
               providerId: true,
+              providerSessionId: true,
               resourceType: true,
               resourceName: true,
               quantity: true,
@@ -186,6 +348,8 @@ export default async function communityRoutes(fastify, options) {
           mealPlan: true,
           dietaryProfiles: {
             select: {
+              userId: true,
+              sessionId: true,
               allergies: true,
               dietaryRestrictions: true,
               preferences: true,
@@ -202,7 +366,7 @@ export default async function communityRoutes(fastify, options) {
       }
 
       // Check if event is public or user is the organizer
-      if (!event.isPublic && (!request.user || request.user.id !== event.organizerId)) {
+      if (!event.isPublic && !actorOwnsRecord(request.actor, event, EVENT_OWNER_FIELDS)) {
         return reply.code(403).send({
           success: false,
           message: 'Access denied to private event',
@@ -211,7 +375,7 @@ export default async function communityRoutes(fastify, options) {
 
       reply.send({
         success: true,
-        data: { event },
+        data: { event: serializeEventForActor(event, request.actor) },
       });
     } catch (error) {
       console.error('Error fetching event details:', error);
@@ -225,7 +389,7 @@ export default async function communityRoutes(fastify, options) {
 
   // Volunteer signup for event
   fastify.post('/community-events/:id/volunteers', {
-    preHandler: [authenticate, validateBody(volunteerSignupSchema)],
+    preHandler: [requireActor, validateBody(volunteerSignupSchema)],
   }, async (request, reply) => {
     try {
       const { id: eventId } = request.params;
@@ -260,9 +424,16 @@ export default async function communityRoutes(fastify, options) {
         });
       }
 
+      if (!canPublicActorWriteEvent(request.actor, event)) {
+        return reply.code(403).send({
+          success: false,
+          message: 'Access denied to private event',
+        });
+      }
+
       // Check if user already volunteered for this event
       const existingVolunteer = event.volunteers.find(
-        v => v.volunteerId === request.user.id
+        (volunteer) => actorOwnsRecord(request.actor, volunteer, VOLUNTEER_OWNER_FIELDS)
       );
 
       if (existingVolunteer) {
@@ -283,7 +454,8 @@ export default async function communityRoutes(fastify, options) {
       const volunteer = await prisma.eventVolunteer.create({
         data: {
           eventId,
-          volunteerId: request.user.id,
+          volunteerId: request.actor?.userId || null,
+          volunteerSessionId: request.actor?.sessionId || null,
           volunteerType,
           capacityOffered,
           availableFrom: availableFrom ? new Date(availableFrom) : null,
@@ -293,10 +465,15 @@ export default async function communityRoutes(fastify, options) {
         },
       });
 
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_VOLUNTEER_SIGNUP', 'event_volunteer', volunteer.id, {
+        eventId,
+        volunteerType,
+      });
+
       reply.code(201).send({
         success: true,
         message: 'Successfully signed up as volunteer',
-        data: { volunteer },
+        data: { volunteer: serializeVolunteer(volunteer) },
       });
     } catch (error) {
       console.error('Error signing up volunteer:', error);
@@ -308,9 +485,52 @@ export default async function communityRoutes(fastify, options) {
     }
   });
 
+  fastify.delete('/community-events/:id/volunteers', {
+    preHandler: [requireActor],
+  }, async (request, reply) => {
+    try {
+      const { id: eventId } = request.params;
+      const where = getVolunteerLookup(eventId, request.actor);
+
+      if (!where) {
+        return reply.code(400).send({
+          success: false,
+          message: 'Session identity missing for volunteer removal',
+        });
+      }
+
+      const existingVolunteer = await prisma.eventVolunteer.findUnique({ where });
+
+      if (!existingVolunteer) {
+        return reply.code(404).send({
+          success: false,
+          message: 'You are not currently signed up for this event',
+        });
+      }
+
+      await prisma.eventVolunteer.delete({ where });
+
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_VOLUNTEER_REMOVE', 'event_volunteer', existingVolunteer.id, {
+        eventId,
+      });
+
+      reply.send({
+        success: true,
+        message: 'Volunteer signup removed successfully',
+      });
+    } catch (error) {
+      console.error('Error removing volunteer signup:', error);
+      reply.code(500).send({
+        success: false,
+        message: 'Failed to remove volunteer signup',
+        error: error.message,
+      });
+    }
+  });
+
   // Offer resources for event
   fastify.post('/community-events/:id/resources', {
-    preHandler: [authenticate, validateBody(resourceOfferSchema)],
+    preHandler: [requireActor, validateBody(resourceOfferSchema)],
   }, async (request, reply) => {
     try {
       const { id: eventId } = request.params;
@@ -341,10 +561,37 @@ export default async function communityRoutes(fastify, options) {
         });
       }
 
+      if (!canPublicActorWriteEvent(request.actor, event)) {
+        return reply.code(403).send({
+          success: false,
+          message: 'Access denied to private event',
+        });
+      }
+
+      const actorResourceFilter = getResourceActorFilter(eventId, request.actor);
+      if (!actorResourceFilter) {
+        return reply.code(400).send({
+          success: false,
+          message: 'Session identity missing for resource offer',
+        });
+      }
+
+      const existingResourceOfferCount = await prisma.eventResource.count({
+        where: actorResourceFilter,
+      });
+
+      if (existingResourceOfferCount >= MAX_RESOURCE_OFFERS_PER_ACTOR_PER_EVENT) {
+        return reply.code(429).send({
+          success: false,
+          message: 'Resource offer limit reached for this event',
+        });
+      }
+
       const resource = await prisma.eventResource.create({
         data: {
           eventId,
-          providerId: request.user.id,
+          providerId: request.actor?.userId || null,
+          providerSessionId: request.actor?.sessionId || null,
           resourceType,
           resourceName,
           quantity,
@@ -353,10 +600,15 @@ export default async function communityRoutes(fastify, options) {
         },
       });
 
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_RESOURCE_OFFER', 'event_resource', resource.id, {
+        eventId,
+        resourceType,
+      });
+
       reply.code(201).send({
         success: true,
         message: 'Resource offer submitted successfully',
-        data: { resource },
+        data: { resource: serializeResource(resource) },
       });
     } catch (error) {
       console.error('Error offering resource:', error);
@@ -423,7 +675,7 @@ export default async function communityRoutes(fastify, options) {
 
   // Create/update meal plan for event
   fastify.post('/community-events/:id/meal-plan', {
-    preHandler: [authenticate],
+    preHandler: [requireActor, validateBody(mealPlanSchema)],
   }, async (request, reply) => {
     try {
       const { id: eventId } = request.params;
@@ -448,7 +700,7 @@ export default async function communityRoutes(fastify, options) {
         });
       }
 
-      if (event.organizerId !== request.user.id) {
+      if (!actorOwnsRecord(request.actor, event, EVENT_OWNER_FIELDS)) {
         return reply.code(403).send({
           success: false,
           message: 'Only event organizer can create meal plans',
@@ -476,6 +728,10 @@ export default async function communityRoutes(fastify, options) {
         },
       });
 
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_MEAL_PLAN_UPSERT', 'event_meal_plan', mealPlan.id, {
+        eventId,
+      });
+
       reply.send({
         success: true,
         message: 'Meal plan saved successfully',
@@ -493,7 +749,7 @@ export default async function communityRoutes(fastify, options) {
 
   // Update user dietary profile for event
   fastify.post('/community-events/:id/dietary-profile', {
-    preHandler: [authenticate],
+    preHandler: [requireActor, validateBody(dietaryProfileSchema)],
   }, async (request, reply) => {
     try {
       const { id: eventId } = request.params;
@@ -516,13 +772,24 @@ export default async function communityRoutes(fastify, options) {
         });
       }
 
+      if (!canPublicActorWriteEvent(request.actor, event)) {
+        return reply.code(403).send({
+          success: false,
+          message: 'Access denied to private event',
+        });
+      }
+
+      const where = getDietaryLookup(eventId, request.actor);
+
+      if (!where) {
+        return reply.code(400).send({
+          success: false,
+          message: 'Session identity missing for dietary profile',
+        });
+      }
+
       const dietaryProfile = await prisma.eventDietaryProfile.upsert({
-        where: {
-          eventId_userId: {
-            eventId,
-            userId: request.user.id,
-          },
-        },
+        where,
         update: {
           allergies,
           dietaryRestrictions,
@@ -531,7 +798,8 @@ export default async function communityRoutes(fastify, options) {
         },
         create: {
           eventId,
-          userId: request.user.id,
+          userId: request.actor?.userId || null,
+          sessionId: request.actor?.sessionId || null,
           allergies,
           dietaryRestrictions,
           preferences,
@@ -539,10 +807,14 @@ export default async function communityRoutes(fastify, options) {
         },
       });
 
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_DIETARY_PROFILE_UPSERT', 'event_dietary_profile', dietaryProfile.id, {
+        eventId,
+      });
+
       reply.send({
         success: true,
         message: 'Dietary profile saved successfully',
-        data: { dietaryProfile },
+        data: { dietaryProfile: serializeDietaryProfile(dietaryProfile) },
       });
     } catch (error) {
       console.error('Error saving dietary profile:', error);
@@ -556,17 +828,20 @@ export default async function communityRoutes(fastify, options) {
 
   // Update community event
   fastify.put('/community-events/:id', {
-    preHandler: [authenticate],
+    preHandler: [requireActor, validateBody(updateEventSchema)],
   }, async (request, reply) => {
     try {
       const { id } = request.params;
       const {
         eventName,
+        eventType,
         description,
         eventDate,
         startTime,
         endTime,
         location,
+        latitude,
+        longitude,
         targetServings,
         budgetCents,
         isPublic,
@@ -586,7 +861,7 @@ export default async function communityRoutes(fastify, options) {
         });
       }
 
-      if (existingEvent.organizerId !== request.user.id) {
+      if (!actorOwnsRecord(request.actor, existingEvent, EVENT_OWNER_FIELDS)) {
         return reply.code(403).send({
           success: false,
           message: 'Only the event organizer can update this event',
@@ -597,11 +872,14 @@ export default async function communityRoutes(fastify, options) {
         where: { id },
         data: {
           eventName,
+          eventType,
           description,
           eventDate: eventDate ? new Date(eventDate) : undefined,
           startTime: startTime ? new Date(startTime) : undefined,
           endTime: endTime ? new Date(endTime) : undefined,
           location,
+          latitude,
+          longitude,
           targetServings,
           budgetCents,
           isPublic,
@@ -615,10 +893,15 @@ export default async function communityRoutes(fastify, options) {
         },
       });
 
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_UPDATE', 'community_event', event.id, {
+        status: event.status,
+        isPublic: event.isPublic,
+      });
+
       reply.send({
         success: true,
         message: 'Event updated successfully',
-        data: { event },
+        data: { event: serializeEventForActor(event, request.actor) },
       });
     } catch (error) {
       console.error('Error updating event:', error);
@@ -632,7 +915,7 @@ export default async function communityRoutes(fastify, options) {
 
   // Delete community event
   fastify.delete('/community-events/:id', {
-    preHandler: [authenticate],
+    preHandler: [requireActor],
   }, async (request, reply) => {
     try {
       const { id } = request.params;
@@ -649,7 +932,7 @@ export default async function communityRoutes(fastify, options) {
         });
       }
 
-      if (existingEvent.organizerId !== request.user.id) {
+      if (!actorOwnsRecord(request.actor, existingEvent, EVENT_OWNER_FIELDS)) {
         return reply.code(403).send({
           success: false,
           message: 'Only the event organizer can delete this event',
@@ -658,6 +941,10 @@ export default async function communityRoutes(fastify, options) {
 
       await prisma.communityEvent.delete({
         where: { id },
+      });
+
+      await writeCommunityAudit(request, 'COMMUNITY_EVENT_DELETE', 'community_event', id, {
+        eventName: existingEvent.eventName,
       });
 
       reply.send({

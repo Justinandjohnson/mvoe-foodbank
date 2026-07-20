@@ -1,98 +1,246 @@
-// CreateEventScreen - Community meal event creation (Phase 3B)
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
+  ActivityIndicator,
   Alert,
-  Switch,
   Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-// DateTimePicker removed - not compatible with web
-import { useAuth } from '../contexts/AuthContext';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
 import { communityService } from '../api/services';
 
-export default function CreateEventScreen({ navigation }) {
-  const { isAuthenticated } = useAuth();
+const EVENT_TYPES = [
+  { key: 'community_meal', label: 'Community meal', icon: 'restaurant', color: '#10B981' },
+  { key: 'potluck', label: 'Potluck', icon: 'people', color: '#0EA5E9' },
+  { key: 'barbecue', label: 'Barbecue', icon: 'flame', color: '#F97316' },
+  { key: 'distribution', label: 'Distribution', icon: 'cube', color: '#8B5CF6' },
+  { key: 'other', label: 'Other', icon: 'calendar', color: '#64748B' },
+];
 
-  // Form state
+function formatCoordinate(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(6) : '';
+}
+
+async function getCurrentLocation() {
+  if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.geolocation) {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }),
+        reject,
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    });
+  }
+
+  const permission = await Location.requestForegroundPermissionsAsync();
+  if (permission.status !== 'granted') {
+    throw new Error('Location permission was denied');
+  }
+
+  const position = await Location.getCurrentPositionAsync({
+    accuracy: Location.Accuracy.Balanced,
+  });
+
+  return {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+  };
+}
+
+function isLocationDeniedError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return error?.code === 1 || message.includes('denied') || message.includes('permission');
+}
+
+function showMessage(title, message, onPress) {
+  if (typeof window !== 'undefined' && window.alert) {
+    window.alert(`${title}: ${message}`);
+    if (onPress) onPress();
+    return;
+  }
+
+  Alert.alert(title, message, onPress ? [{ text: 'OK', onPress }] : undefined);
+}
+
+export default function CreateEventScreen({ navigation, route }) {
+  const initialLocation = route?.params?.initialLocation || null;
+  const initialDraft = route?.params?.initialDraft || null;
+  const editingEventId = route?.params?.eventId || null;
+  const editingEvent = route?.params?.event || null;
+
   const [formData, setFormData] = useState({
     eventName: '',
+    eventType: 'community_meal',
     description: '',
     location: '',
     targetServings: '',
     budgetCents: '',
     maxVolunteers: '',
+    latitude: '',
+    longitude: '',
     isPublic: true,
   });
-
-  // Date/time state - using string inputs for web compatibility
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-  const defaultTime = '12:00'; // Default to noon
-  const [eventDate, setEventDate] = useState(today);
-  const [startTime, setStartTime] = useState(defaultTime);
-  const [endTime, setEndTime] = useState('13:00'); // 1 PM default
-
-  // UI state
+  const [eventDate, setEventDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startTime, setStartTime] = useState('12:00');
+  const [endTime, setEndTime] = useState('14:00');
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [errors, setErrors] = useState({});
-  const [touched, setTouched] = useState({}); // Track which fields have been touched
+
+  useEffect(() => {
+    if (!initialLocation) return;
+
+    setFormData((current) => ({
+      ...current,
+      latitude: current.latitude || formatCoordinate(initialLocation.latitude),
+      longitude: current.longitude || formatCoordinate(initialLocation.longitude),
+    }));
+  }, [initialLocation]);
+
+  useEffect(() => {
+    if (!initialDraft) return;
+
+    setFormData((current) => ({
+      ...current,
+      eventName: current.eventName || initialDraft.eventName || '',
+      eventType: current.eventType === 'community_meal'
+        ? (initialDraft.eventType || current.eventType)
+        : current.eventType,
+      description: current.description || initialDraft.description || '',
+      location: current.location || initialDraft.location || '',
+      latitude: current.latitude || formatCoordinate(initialDraft.latitude),
+      longitude: current.longitude || formatCoordinate(initialDraft.longitude),
+    }));
+  }, [initialDraft]);
+
+  useEffect(() => {
+    if (!editingEvent) return;
+
+    setFormData((current) => ({
+      ...current,
+      eventName: editingEvent.eventName || current.eventName,
+      eventType: editingEvent.eventType || current.eventType,
+      description: editingEvent.description || current.description,
+      location: editingEvent.location || current.location,
+      targetServings: editingEvent.targetServings ? String(editingEvent.targetServings) : current.targetServings,
+      budgetCents: typeof editingEvent.budgetCents === 'number'
+        ? String(editingEvent.budgetCents / 100)
+        : current.budgetCents,
+      maxVolunteers: editingEvent.maxVolunteers ? String(editingEvent.maxVolunteers) : current.maxVolunteers,
+      latitude: current.latitude || formatCoordinate(editingEvent.latitude),
+      longitude: current.longitude || formatCoordinate(editingEvent.longitude),
+      isPublic: typeof editingEvent.isPublic === 'boolean' ? editingEvent.isPublic : current.isPublic,
+    }));
+
+    if (editingEvent.eventDate) {
+      setEventDate(new Date(editingEvent.eventDate).toISOString().split('T')[0]);
+    }
+
+    if (editingEvent.startTime) {
+      const start = new Date(editingEvent.startTime);
+      setStartTime(`${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`);
+    }
+
+    if (editingEvent.endTime) {
+      const end = new Date(editingEvent.endTime);
+      setEndTime(`${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`);
+    }
+  }, [editingEvent]);
+
+  const updateField = (field, value) => {
+    setFormData((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: undefined, coordinates: undefined }));
+  };
 
   const validateForm = () => {
-    const newErrors = {};
+    const nextErrors = {};
 
     if (!formData.eventName.trim()) {
-      newErrors.eventName = 'Event name is required';
+      nextErrors.eventName = 'Event name is required';
     }
 
-    if (!formData.targetServings || isNaN(formData.targetServings) || parseInt(formData.targetServings) < 1) {
-      newErrors.targetServings = 'Please enter a valid number of servings';
+    if (!formData.targetServings || Number.isNaN(Number(formData.targetServings)) || Number(formData.targetServings) < 1) {
+      nextErrors.targetServings = 'Enter a valid number of servings';
     }
 
-    if (formData.budgetCents && (isNaN(formData.budgetCents) || parseFloat(formData.budgetCents) < 0)) {
-      newErrors.budgetCents = 'Please enter a valid budget amount';
+    if (formData.budgetCents && (Number.isNaN(Number(formData.budgetCents)) || Number(formData.budgetCents) < 0)) {
+      nextErrors.budgetCents = 'Enter a valid budget amount';
     }
 
-    if (formData.maxVolunteers && (isNaN(formData.maxVolunteers) || parseInt(formData.maxVolunteers) < 1)) {
-      newErrors.maxVolunteers = 'Please enter a valid number of volunteers';
+    if (formData.maxVolunteers && (Number.isNaN(Number(formData.maxVolunteers)) || Number(formData.maxVolunteers) < 1)) {
+      nextErrors.maxVolunteers = 'Enter a valid volunteer count';
     }
 
-    // Time validation - compare time strings
     if (startTime >= endTime) {
-      newErrors.endTime = 'End time must be after start time';
+      nextErrors.endTime = 'End time must be after start time';
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const hasLatitude = formData.latitude.trim().length > 0;
+    const hasLongitude = formData.longitude.trim().length > 0;
+
+    if ((hasLatitude && !hasLongitude) || (!hasLatitude && hasLongitude)) {
+      nextErrors.coordinates = 'Add both latitude and longitude to place this event on the map';
+    }
+
+    if (hasLatitude) {
+      const latitude = Number(formData.latitude);
+      const longitude = Number(formData.longitude);
+
+      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+        nextErrors.coordinates = 'Latitude must be between -90 and 90';
+      }
+
+      if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+        nextErrors.coordinates = 'Longitude must be between -180 and 180';
+      }
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const handleUseMyLocation = async () => {
+    setLocating(true);
+
+    try {
+      const location = await getCurrentLocation();
+      setFormData((current) => ({
+        ...current,
+        latitude: formatCoordinate(location.latitude),
+        longitude: formatCoordinate(location.longitude),
+      }));
+      setErrors((current) => ({ ...current, coordinates: undefined }));
+    } catch (error) {
+      if (!isLocationDeniedError(error)) {
+        console.error('Error getting event location:', error);
+      }
+      showMessage(
+        'Location unavailable',
+        'Enable location access or enter coordinates manually so the event can show on the map.'
+      );
+    } finally {
+      setLocating(false);
+    }
   };
 
   const handleCreate = async () => {
-    console.log('🚀 handleCreate function called!');
+    if (loading) return;
 
-    // Prevent multiple submissions
-    if (loading) {
-      console.log('Already creating event, ignoring duplicate click');
-      return;
-    }
+    if (!validateForm()) return;
 
-    if (!isAuthenticated) {
-      Alert.alert('Authentication Required', 'Please log in to create events.');
-      return;
-    }
-
-    if (!validateForm()) {
-      return;
-    }
-
-    console.log('Starting event creation...');
     setLoading(true);
 
     try {
-      // Create ISO datetime strings from date and time inputs
       const eventDateTime = new Date(eventDate);
 
       const [startHours, startMinutes] = startTime.split(':').map(Number);
@@ -103,289 +251,337 @@ export default function CreateEventScreen({ navigation }) {
       const endDateTime = new Date(eventDate);
       endDateTime.setHours(endHours, endMinutes, 0, 0);
 
-      const eventData = {
+      const hasCoordinates = formData.latitude.trim() && formData.longitude.trim();
+
+      const payload = {
         eventName: formData.eventName.trim(),
+        eventType: formData.eventType,
         description: formData.description.trim() || undefined,
         eventDate: eventDateTime.toISOString(),
         startTime: startDateTime.toISOString(),
         endTime: endDateTime.toISOString(),
         location: formData.location.trim() || undefined,
-        targetServings: parseInt(formData.targetServings),
-        budgetCents: formData.budgetCents ? Math.round(parseFloat(formData.budgetCents) * 100) : undefined,
-        maxVolunteers: formData.maxVolunteers ? parseInt(formData.maxVolunteers) : undefined,
+        latitude: hasCoordinates ? Number(formData.latitude) : undefined,
+        longitude: hasCoordinates ? Number(formData.longitude) : undefined,
+        targetServings: parseInt(formData.targetServings, 10),
+        budgetCents: formData.budgetCents
+          ? Math.round(parseFloat(formData.budgetCents) * 100)
+          : undefined,
+        maxVolunteers: formData.maxVolunteers
+          ? parseInt(formData.maxVolunteers, 10)
+          : undefined,
         isPublic: formData.isPublic,
       };
 
-      console.log('Creating event:', eventData);
-
-      // Call API to create event
-      const response = await communityService.createEvent(eventData);
-      console.log('Event created successfully:', response);
-
-      // Use window.alert for web compatibility
-      if (typeof window !== 'undefined' && window.alert) {
-        window.alert('Success! Your community event has been created successfully.');
-        navigation.goBack();
+      if (editingEventId) {
+        await communityService.updateEvent(editingEventId, payload);
       } else {
-        Alert.alert(
-          'Success!',
-          'Your community event has been created successfully.',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.goBack(),
-            },
-          ]
-        );
+        await communityService.createEvent(payload);
       }
 
+      showMessage(
+        'Success',
+        editingEventId ? 'Your food gathering has been updated.' : 'Your food gathering has been created.',
+        () => navigation.goBack()
+      );
     } catch (error) {
-      console.error('Error creating event:', error);
-      console.error('Error details:', {
-        message: error.message,
-        response: error.response,
-        stack: error.stack
-      });
-
-      // Use window.alert for web compatibility in error case too
-      if (typeof window !== 'undefined' && window.alert) {
-        window.alert('Error: Failed to create event. Please try again.');
-      } else {
-        Alert.alert(
-          'Error',
-          'Failed to create event. Please try again.',
-        );
-      }
+      console.error('Error saving community event:', error);
+      showMessage('Error', editingEventId ? 'Failed to update the event. Please try again.' : 'Failed to create the event. Please try again.');
     } finally {
-      console.log('Finished event creation attempt, setting loading to false');
       setLoading(false);
     }
   };
 
-  const renderDateTimePickers = () => (
-    <View style={styles.dateTimeSection}>
-      <Text style={styles.sectionTitle}>📅 Event Schedule</Text>
-
-      {/* Event Date */}
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>Event Date</Text>
-        <TextInput
-          style={styles.textInput}
-          value={eventDate}
-          onChangeText={(date) => {
-            setEventDate(date);
-            setTouched({ ...touched, eventDate: true });
-          }}
-          placeholder="YYYY-MM-DD"
-          keyboardType="default"
-        />
-      </View>
-
-      {/* Start Time */}
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>Start Time</Text>
-        <TextInput
-          style={styles.textInput}
-          value={startTime}
-          onChangeText={(time) => {
-            setStartTime(time);
-            setTouched({ ...touched, startTime: true });
-          }}
-          placeholder="HH:MM (24-hour format)"
-          keyboardType="default"
-        />
-      </View>
-
-      {/* End Time */}
-      <View style={styles.inputGroup}>
-        <Text style={styles.label}>End Time</Text>
-        <TextInput
-          style={[styles.textInput, errors.endTime && styles.inputError]}
-          value={endTime}
-          onChangeText={(time) => {
-            setEndTime(time);
-            setTouched({ ...touched, endTime: true });
-          }}
-          placeholder="HH:MM (24-hour format)"
-          keyboardType="default"
-        />
-        {touched.endTime && errors.endTime && <Text style={styles.errorText}>{errors.endTime}</Text>}
-      </View>
-    </View>
-  );
-
-  if (!isAuthenticated) {
-    return (
-      <View style={styles.centerContainer}>
-        <Ionicons name="lock-closed" size={48} color="#6B7280" />
-        <Text style={styles.authMessage}>Please log in to create events</Text>
-        <TouchableOpacity
-          style={styles.authButton}
-          onPress={() => navigation.navigate('Auth')}
-        >
-          <Text style={styles.authButtonText}>Sign In</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const hasCoordinates = formData.latitude.trim() && formData.longitude.trim();
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color="white" />
+      <LinearGradient
+        colors={['#06131F', '#0C2235', '#123047']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.headerGradient}
+      >
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={22} color="white" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Community Event</Text>
-      </View>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Basic Information */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📝 Basic Information</Text>
+        <View style={styles.heroCopy}>
+          <Text style={styles.heroEyebrow}>Map-connected gathering</Text>
+          <Text style={styles.heroTitle}>
+            {editingEventId
+              ? 'Update a public meal that already lives on MVOE’s live map.'
+              : 'Create a public meal that can show up on MVOE’s live map.'}
+          </Text>
+          <Text style={styles.heroText}>
+            Add the event type, timing, and coordinates so neighbors can see where the food is happening.
+          </Text>
+        </View>
+      </LinearGradient>
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.glassCard}>
+          <Text style={styles.sectionTitle}>Event type</Text>
+          <View style={styles.typeGrid}>
+            {EVENT_TYPES.map((option) => {
+              const active = formData.eventType === option.key;
+
+              return (
+                <TouchableOpacity
+                  key={option.key}
+                  style={[
+                    styles.typeCard,
+                    active && {
+                      borderColor: option.color,
+                      backgroundColor: `${option.color}12`,
+                    },
+                  ]}
+                  onPress={() => updateField('eventType', option.key)}
+                >
+                  <Ionicons
+                    name={option.icon}
+                    size={18}
+                    color={active ? option.color : '#64748B'}
+                  />
+                  <Text style={[styles.typeCardTitle, active && { color: option.color }]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        <View style={styles.glassCard}>
+          <Text style={styles.sectionTitle}>Basic details</Text>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Event Name *</Text>
+            <Text style={styles.label}>Event name</Text>
             <TextInput
-              style={[styles.textInput, touched.eventName && errors.eventName && styles.inputError]}
-              placeholder="Community Cookout, Holiday Meal, etc."
+              style={[styles.input, errors.eventName && styles.inputError]}
               value={formData.eventName}
-              onChangeText={(text) => {
-                setFormData({ ...formData, eventName: text });
-                setTouched({ ...touched, eventName: true });
-              }}
-              maxLength={100}
+              onChangeText={(text) => updateField('eventName', text)}
+              placeholder="Neighborhood cookout, pop-up pantry, Sunday potluck"
+              placeholderTextColor="#94A3B8"
             />
-            {touched.eventName && errors.eventName && <Text style={styles.errorText}>{errors.eventName}</Text>}
+            {errors.eventName ? <Text style={styles.errorText}>{errors.eventName}</Text> : null}
           </View>
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Description</Text>
             <TextInput
-              style={[styles.textAreaInput]}
-              placeholder="Describe your event, menu, special requirements, etc."
-              value={formData.description}
-              onChangeText={(text) => setFormData({ ...formData, description: text })}
+              style={[styles.input, styles.textArea]}
               multiline
-              numberOfLines={3}
-              maxLength={500}
+              value={formData.description}
+              onChangeText={(text) => updateField('description', text)}
+              placeholder="Share the menu, serving plan, or pickup details."
+              placeholderTextColor="#94A3B8"
             />
-            <Text style={styles.charCount}>{formData.description.length}/500</Text>
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Location</Text>
+            <Text style={styles.label}>Location name or address</Text>
             <TextInput
-              style={styles.textInput}
-              placeholder="Address or venue name"
+              style={styles.input}
               value={formData.location}
-              onChangeText={(text) => setFormData({ ...formData, location: text })}
+              onChangeText={(text) => updateField('location', text)}
+              placeholder="Church parking lot, community center, 123 Main St"
+              placeholderTextColor="#94A3B8"
             />
           </View>
         </View>
 
-        {/* Date and Time */}
-        {renderDateTimePickers()}
+        <View style={styles.glassCard}>
+          <Text style={styles.sectionTitle}>Schedule</Text>
 
-        {/* Event Details */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>👥 Event Details</Text>
+          <View style={styles.row}>
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>Date</Text>
+              <TextInput
+                style={styles.input}
+                value={eventDate}
+                onChangeText={setEventDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Target Servings *</Text>
-            <TextInput
-              style={[styles.textInput, touched.targetServings && errors.targetServings && styles.inputError]}
-              placeholder="How many people will this serve?"
-              value={formData.targetServings}
-              onChangeText={(text) => {
-                setFormData({ ...formData, targetServings: text });
-                setTouched({ ...touched, targetServings: true });
-              }}
-              keyboardType="numeric"
-            />
-            {touched.targetServings && errors.targetServings && <Text style={styles.errorText}>{errors.targetServings}</Text>}
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>Start</Text>
+              <TextInput
+                style={styles.input}
+                value={startTime}
+                onChangeText={setStartTime}
+                placeholder="HH:MM"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
+
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>End</Text>
+              <TextInput
+                style={[styles.input, errors.endTime && styles.inputError]}
+                value={endTime}
+                onChangeText={setEndTime}
+                placeholder="HH:MM"
+                placeholderTextColor="#94A3B8"
+              />
+            </View>
+          </View>
+
+          {errors.endTime ? <Text style={styles.errorText}>{errors.endTime}</Text> : null}
+        </View>
+
+        <View style={styles.glassCard}>
+          <Text style={styles.sectionTitle}>Capacity</Text>
+
+          <View style={styles.row}>
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>Target servings</Text>
+              <TextInput
+                style={[styles.input, errors.targetServings && styles.inputError]}
+                value={formData.targetServings}
+                onChangeText={(text) => updateField('targetServings', text)}
+                placeholder="150"
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+              />
+              {errors.targetServings ? <Text style={styles.errorText}>{errors.targetServings}</Text> : null}
+            </View>
+
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>Budget (USD)</Text>
+              <TextInput
+                style={[styles.input, errors.budgetCents && styles.inputError]}
+                value={formData.budgetCents}
+                onChangeText={(text) => updateField('budgetCents', text)}
+                placeholder="0.00"
+                placeholderTextColor="#94A3B8"
+                keyboardType="decimal-pad"
+              />
+              {errors.budgetCents ? <Text style={styles.errorText}>{errors.budgetCents}</Text> : null}
+            </View>
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Budget (USD)</Text>
+            <Text style={styles.label}>Max volunteers</Text>
             <TextInput
-              style={[styles.textInput, touched.budgetCents && errors.budgetCents && styles.inputError]}
-              placeholder="0.00"
-              value={formData.budgetCents}
-              onChangeText={(text) => {
-                setFormData({ ...formData, budgetCents: text });
-                setTouched({ ...touched, budgetCents: true });
-              }}
-              keyboardType="decimal-pad"
-            />
-            {touched.budgetCents && errors.budgetCents && <Text style={styles.errorText}>{errors.budgetCents}</Text>}
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Max Volunteers</Text>
-            <TextInput
-              style={[styles.textInput, touched.maxVolunteers && errors.maxVolunteers && styles.inputError]}
-              placeholder="Leave empty for unlimited"
+              style={[styles.input, errors.maxVolunteers && styles.inputError]}
               value={formData.maxVolunteers}
-              onChangeText={(text) => {
-                setFormData({ ...formData, maxVolunteers: text });
-                setTouched({ ...touched, maxVolunteers: true });
-              }}
+              onChangeText={(text) => updateField('maxVolunteers', text)}
+              placeholder="Leave blank for open signup"
+              placeholderTextColor="#94A3B8"
               keyboardType="numeric"
             />
-            {touched.maxVolunteers && errors.maxVolunteers && <Text style={styles.errorText}>{errors.maxVolunteers}</Text>}
+            {errors.maxVolunteers ? <Text style={styles.errorText}>{errors.maxVolunteers}</Text> : null}
           </View>
         </View>
 
-        {/* Privacy Settings */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🔒 Privacy Settings</Text>
-
-          <View style={styles.switchRow}>
-            <View style={styles.switchInfo}>
-              <Text style={styles.switchLabel}>Public Event</Text>
-              <Text style={styles.switchDescription}>
-                Make this event visible to all community members
+        <View style={styles.glassCard}>
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.sectionTitle}>Map visibility</Text>
+              <Text style={styles.sectionMeta}>
+                Coordinates are what place this event on the live map for food seekers.
               </Text>
             </View>
+
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleUseMyLocation}>
+              {locating ? (
+                <ActivityIndicator size="small" color="#0F172A" />
+              ) : (
+                <>
+                  <Ionicons name="locate" size={16} color="#0F172A" />
+                  <Text style={styles.secondaryButtonText}>Use my location</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.row}>
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>Latitude</Text>
+              <TextInput
+                style={[styles.input, errors.coordinates && styles.inputError]}
+                value={formData.latitude}
+                onChangeText={(text) => updateField('latitude', text)}
+                placeholder="37.774900"
+                placeholderTextColor="#94A3B8"
+                keyboardType="decimal-pad"
+              />
+            </View>
+
+            <View style={[styles.inputGroup, styles.rowItem]}>
+              <Text style={styles.label}>Longitude</Text>
+              <TextInput
+                style={[styles.input, errors.coordinates && styles.inputError]}
+                value={formData.longitude}
+                onChangeText={(text) => updateField('longitude', text)}
+                placeholder="-122.419400"
+                placeholderTextColor="#94A3B8"
+                keyboardType="decimal-pad"
+              />
+            </View>
+          </View>
+
+          {errors.coordinates ? <Text style={styles.errorText}>{errors.coordinates}</Text> : null}
+
+          <View style={[styles.mapStatus, hasCoordinates ? styles.mapReady : styles.mapPending]}>
+            <Ionicons
+              name={hasCoordinates ? 'checkmark-circle' : 'alert-circle'}
+              size={16}
+              color={hasCoordinates ? '#047857' : '#B45309'}
+            />
+            <Text style={[styles.mapStatusText, hasCoordinates ? styles.mapReadyText : styles.mapPendingText]}>
+              {hasCoordinates
+                ? 'This event is ready to appear on the public map.'
+                : 'Without coordinates, this event can be public but it will not appear on the live map.'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.glassCard}>
+          <View style={styles.privacyRow}>
+            <View style={styles.privacyCopy}>
+              <Text style={styles.sectionTitle}>Public event</Text>
+              <Text style={styles.sectionMeta}>
+                Keep this on if the event should be visible to neighbors and discoverable on the map.
+              </Text>
+            </View>
+
             <Switch
               value={formData.isPublic}
-              onValueChange={(value) => setFormData({ ...formData, isPublic: value })}
-              trackColor={{ false: '#E5E7EB', true: '#10B981' }}
-              thumbColor={formData.isPublic ? '#ffffff' : '#f4f3f4'}
+              onValueChange={(value) => updateField('isPublic', value)}
+              trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
+              thumbColor="#ffffff"
             />
           </View>
         </View>
 
-        {/* Action Buttons */}
-        <View style={styles.actionSection}>
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={() => navigation.goBack()}
-          >
+        <View style={styles.actionRow}>
+          <TouchableOpacity style={styles.cancelButton} onPress={() => navigation.goBack()}>
             <Text style={styles.cancelButtonText}>Cancel</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.createButton, loading && styles.buttonDisabled]}
+            style={[styles.primaryButton, loading && styles.buttonDisabled]}
             onPress={handleCreate}
             disabled={loading}
           >
             {loading ? (
-              <Text style={styles.createButtonText}>Creating...</Text>
+              <ActivityIndicator size="small" color="white" />
             ) : (
               <>
-                <Ionicons name="add-circle" size={20} color="white" />
-                <Text style={styles.createButtonText}>Create Event</Text>
+                <Ionicons name={editingEventId ? 'save' : 'add-circle'} size={18} color="white" />
+                <Text style={styles.primaryButtonText}>{editingEventId ? 'Save event' : 'Create event'}</Text>
               </>
             )}
           </TouchableOpacity>
         </View>
-
-        <View style={styles.bottomPadding} />
       </ScrollView>
     </View>
   );
@@ -394,211 +590,233 @@ export default function CreateEventScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    minHeight: 0,
+    backgroundColor: '#EEF4F8',
   },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    padding: 20,
-  },
-
-  // Header
-  header: {
-    backgroundColor: '#10B981',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 16,
+  headerGradient: {
+    paddingTop: Platform.OS === 'web' ? 28 : 54,
+    paddingHorizontal: 18,
+    paddingBottom: 26,
   },
   backButton: {
-    padding: 4,
-    marginRight: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    marginBottom: 18,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: 'white',
-    flex: 1,
+  heroCopy: {
+    maxWidth: 620,
   },
-
-  // Auth
-  authMessage: {
-    fontSize: 16,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginTop: 16,
-    marginBottom: 24,
-  },
-  authButton: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  authButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-
-  // Content
-  scrollView: {
-    flex: 1,
-  },
-  section: {
-    backgroundColor: 'white',
-    marginTop: 12,
-    marginHorizontal: 16,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 16,
-  },
-
-  // Form
-  inputGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#374151',
+  heroEyebrow: {
+    color: '#A7F3D0',
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     marginBottom: 6,
   },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: '#111827',
-    backgroundColor: '#FFFFFF',
+  heroTitle: {
+    color: 'white',
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '800',
+    marginBottom: 10,
   },
-  textAreaInput: {
+  heroText: {
+    color: '#DBEAFE',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  scrollView: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+  },
+  content: {
+    flexGrow: 1,
+    padding: 16,
+    paddingBottom: 42,
+    gap: 14,
+  },
+  glassCard: {
+    backgroundColor: 'rgba(255,255,255,0.84)',
+    borderRadius: 24,
+    padding: 18,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    color: '#111827',
+    borderColor: 'rgba(255,255,255,0.72)',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 14,
+  },
+  sectionTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  sectionMeta: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  inputGroup: {
+    marginBottom: 14,
+  },
+  label: {
+    color: '#334155',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  input: {
     backgroundColor: '#FFFFFF',
-    minHeight: 80,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D9E2EC',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: '#0F172A',
+    fontSize: 15,
+  },
+  textArea: {
+    minHeight: 88,
     textAlignVertical: 'top',
   },
   inputError: {
     borderColor: '#EF4444',
   },
   errorText: {
+    color: '#DC2626',
     fontSize: 12,
-    color: '#EF4444',
-    marginTop: 4,
+    fontWeight: '700',
+    marginTop: 6,
   },
-  charCount: {
-    fontSize: 12,
-    color: '#6B7280',
-    textAlign: 'right',
-    marginTop: 4,
+  row: {
+    flexDirection: 'row',
+    gap: 12,
   },
-
-  // Date/Time
-  dateTimeSection: {
-    backgroundColor: 'white',
-    marginTop: 12,
-    marginHorizontal: 16,
-    padding: 20,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+  rowItem: {
+    flex: 1,
   },
-  dateTimeButton: {
+  typeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  typeCard: {
+    minWidth: 130,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
+    gap: 8,
     backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
-  dateTimeText: {
-    fontSize: 16,
-    color: '#111827',
-    marginLeft: 8,
+  typeCardTitle: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
   },
-
-  // Switch
-  switchRow: {
+  secondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D9E2EC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  secondaryButtonText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  mapStatus: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    marginTop: 2,
+  },
+  mapReady: {
+    backgroundColor: '#ECFDF5',
+  },
+  mapPending: {
+    backgroundColor: '#FFF7ED',
+  },
+  mapStatusText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  mapReadyText: {
+    color: '#047857',
+  },
+  mapPendingText: {
+    color: '#B45309',
+  },
+  privacyRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 14,
   },
-  switchInfo: {
+  privacyCopy: {
     flex: 1,
-    marginRight: 16,
   },
-  switchLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  switchDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-
-  // Actions
-  actionSection: {
+  actionRow: {
     flexDirection: 'row',
     gap: 12,
-    marginHorizontal: 16,
-    marginTop: 20,
+    marginTop: 6,
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 14,
-    borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    paddingVertical: 14,
+    backgroundColor: '#E2E8F0',
   },
   cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6B7280',
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
   },
-  createButton: {
-    flex: 2,
-    backgroundColor: '#10B981',
-    paddingVertical: 14,
-    borderRadius: 8,
+  primaryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    backgroundColor: '#0F766E',
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
   },
-  createButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+  primaryButtonText: {
     color: 'white',
+    fontSize: 14,
+    fontWeight: '800',
   },
   buttonDisabled: {
-    opacity: 0.6,
-  },
-  bottomPadding: {
-    height: 40,
+    opacity: 0.7,
   },
 });

@@ -91,7 +91,7 @@ Every dollar helps provide meals to families in need. Join me in making a differ
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {/* Success Header */}
       <View style={styles.successHeader}>
         <View style={styles.successIcon}>
@@ -208,7 +208,13 @@ Every dollar helps provide meals to families in need. Join me in making a differ
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     backgroundColor: '#F9FAFB',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 32,
   },
   loadingContainer: {
     flex: 1,

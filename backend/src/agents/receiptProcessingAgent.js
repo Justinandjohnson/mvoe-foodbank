@@ -1,6 +1,7 @@
 // Receipt Processing Agent - AI-driven OCR and Google Sheets tracking
 import ZenClient from '../mcp/zenClient.js';
 import GoogleSheetsClient from '../mcp/googleSheetsClient.js';
+import { recordAgentActivity } from '../services/agentActivityService.js';
 
 class ReceiptProcessingAgent {
   constructor(socketIo) {
@@ -370,10 +371,19 @@ Return JSON:
    * Emit progress updates via WebSocket
    */
   emitProgress(sessionId, message) {
-    this.io.to(sessionId).emit('agent:progress', {
+    const payload = {
       type: 'progress',
+      agentType: 'receipt-processing',
+      sessionId,
       message,
       timestamp: new Date().toISOString()
+    };
+    this.io.to(sessionId).emit('agent:progress', payload);
+    this.io.emit('agent:progress', payload);
+    recordAgentActivity({
+      action: 'AGENT_PROGRESS',
+      entityId: sessionId,
+      details: { agentType: 'receipt-processing', message },
     });
   }
 
@@ -381,10 +391,19 @@ Return JSON:
    * Emit completion via WebSocket
    */
   emitComplete(sessionId, result) {
-    this.io.to(sessionId).emit('agent:complete', {
+    const payload = {
       type: 'complete',
+      agentType: 'receipt-processing',
+      sessionId,
       result,
       timestamp: new Date().toISOString()
+    };
+    this.io.to(sessionId).emit('agent:complete', payload);
+    this.io.emit('agent:complete', payload);
+    recordAgentActivity({
+      action: 'AGENT_COMPLETE',
+      entityId: sessionId,
+      details: { agentType: 'receipt-processing' },
     });
   }
 
@@ -392,10 +411,19 @@ Return JSON:
    * Emit error via WebSocket
    */
   emitError(sessionId, error) {
-    this.io.to(sessionId).emit('agent:error', {
+    const payload = {
       type: 'error',
+      agentType: 'receipt-processing',
+      sessionId,
       error,
       timestamp: new Date().toISOString()
+    };
+    this.io.to(sessionId).emit('agent:error', payload);
+    this.io.emit('agent:error', payload);
+    recordAgentActivity({
+      action: 'AGENT_ERROR',
+      entityId: sessionId,
+      details: { agentType: 'receipt-processing', error },
     });
   }
 }

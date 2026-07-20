@@ -1,15 +1,39 @@
 // Redis Client - Caching and session management
-import Redis from 'ioredis';
+// ponytail: in-memory fallback so demo runs without Redis
 import { config } from '../config/index.js';
+import Redis from 'ioredis';
 
 let redisClient;
 
+const memCache = new Map();
+const memoryClient = {
+  get: async (k) => { const v = memCache.get(k); return v?.exp && v.exp < Date.now() ? (memCache.delete(k), null) : (v?.val ?? null); },
+  setex: async (k, ttl, v) => { memCache.set(k, { val: v, exp: Date.now() + ttl * 1000 }); return 'OK'; },
+  del: async (...keys) => { let c = 0; keys.flat().forEach(k => { if (memCache.delete(k)) c++; }); return c; },
+  keys: async (pattern) => { const re = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$'); return [...memCache.keys()].filter(k => re.test(k)); },
+  exists: async (k) => memCache.has(k) ? 1 : 0,
+  expire: async () => 1,
+  incr: async (k) => { const v = (parseInt(memCache.get(k)?.val) || 0) + 1; memCache.set(k, { val: String(v) }); return v; },
+  ttl: async () => -1,
+  ping: async () => 'PONG',
+  quit: async () => {},
+  on: () => memoryClient,
+};
+
 /**
- * Get Redis client instance
+ * Get Redis client instance (or in-memory fallback)
  * @returns {Redis}
  */
 export const getRedisClient = () => {
-  if (!redisClient) {
+  if (redisClient) return redisClient;
+
+  if (!config.redisUrl) {
+    console.log('⚠️  Redis not configured — using in-memory cache');
+    redisClient = memoryClient;
+    return redisClient;
+  }
+
+  try {
     redisClient = new Redis(config.redisUrl, {
       maxRetriesPerRequest: 3,
       retryStrategy: (times) => {
@@ -31,16 +55,14 @@ export const getRedisClient = () => {
 
     redisClient.on('error', (err) => {
       console.error('❌ Redis error:', err.message);
+      if (redisClient !== memoryClient) {
+        console.log('⚠️  Falling back to in-memory cache');
+        redisClient = memoryClient;
+      }
     });
-
-    // Handle graceful shutdown
-    const cleanup = async () => {
-      await redisClient.quit();
-      process.exit(0);
-    };
-
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+  } catch {
+    console.log('⚠️  Redis unavailable — using in-memory cache');
+    redisClient = memoryClient;
   }
 
   return redisClient;
@@ -137,4 +159,47 @@ export class CacheService {
   }
 }
 
-export default new CacheService();
+const cacheService = {
+  defaultTTL: 300,
+
+  async get(key) {
+    const value = await getRedisClient().get(key);
+    return value ? JSON.parse(value) : null;
+  },
+
+  async set(key, value, ttl = 300) {
+    return getRedisClient().setex(key, ttl, JSON.stringify(value));
+  },
+
+  async del(key) {
+    return getRedisClient().del(key);
+  },
+
+  async delPattern(pattern) {
+    const client = getRedisClient();
+    const keys = await client.keys(pattern);
+    if (keys.length > 0) {
+      return client.del(...keys);
+    }
+    return 0;
+  },
+
+  async exists(key) {
+    const result = await getRedisClient().exists(key);
+    return result === 1;
+  },
+
+  async expire(key, ttl) {
+    return getRedisClient().expire(key, ttl);
+  },
+
+  async incr(key) {
+    return getRedisClient().incr(key);
+  },
+
+  async ttl(key) {
+    return getRedisClient().ttl(key);
+  },
+};
+
+export default cacheService;

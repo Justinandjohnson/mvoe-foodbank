@@ -1,512 +1,476 @@
-// Home Screen - Redesigned cohesive layout
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  RefreshControl,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { donationService, organizationService } from '../api/services';
+import { communityService, mapService } from '../api/services';
+import AppScreenBackground from '../components/ui/AppScreenBackground';
+import GlassSurface from '../components/ui/GlassSurface';
+
+const SECONDARY_ACTIONS = [
+  {
+    id: 'beacon',
+    title: 'Start beacon',
+    subtitle: 'Turn on a live pickup point from the map.',
+    icon: 'radio',
+    color: '#F97316',
+    onPress: (navigation) => navigation.navigate('Map', { openBeaconComposer: true }),
+  },
+  {
+    id: 'gatherings',
+    title: 'Live meal calendar',
+    subtitle: 'Open map meals and upcoming event timeline.',
+    icon: 'calendar',
+    color: '#8B5CF6',
+    onPress: (navigation) => navigation.navigate('Map', { focusLayer: 'events', openCalendarPanel: true }),
+  },
+  {
+    id: 'volunteers',
+    title: 'Volunteer ops',
+    subtitle: 'Manage reminders, coverage, and approvals.',
+    icon: 'people',
+    color: '#10B981',
+    onPress: (navigation) => navigation.navigate('Map', { openVolunteerWidget: true }),
+  },
+  {
+    id: 'grants',
+    title: 'Grant writer',
+    subtitle: 'Open the funding workspace and Drive sync.',
+    icon: 'document-text',
+    color: '#0EA5E9',
+    onPress: (navigation) => navigation.navigate('Agents', { screen: 'GrantWriter' }),
+  },
+];
+
+function formatDateTime(value) {
+  if (!value) return 'Feed pending';
+  return new Date(value).toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 export default function HomeScreen({ navigation }) {
+  const { width } = useWindowDimensions();
+  const isWide = width >= 1040;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [stats, setStats] = useState(null);
-  const [organizations, setOrganizations] = useState([]);
+  const [mapFeed, setMapFeed] = useState(null);
+  const [events, setEvents] = useState([]);
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadDesk = async (isRefresh = false) => {
     try {
-      const [statsData, orgsData] = await Promise.all([
-        donationService.getStats(),
-        organizationService.getAll({ limit: 5 }),
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const [feedResponse, eventsResponse] = await Promise.all([
+        mapService.getLiveFeed({ radius: 25 }).catch(() => null),
+        communityService.getEvents({ limit: 4, upcoming: true }).catch(() => null),
       ]);
 
-      setStats(statsData.data.stats);
-      setOrganizations(orgsData.data.organizations);
+      setMapFeed(feedResponse?.data || {
+        foodBanks: [],
+        beacons: [],
+        events: [],
+        generatedAt: null,
+      });
+      setEvents(eventsResponse?.data?.events || []);
     } catch (error) {
-      console.error('Error loading home data:', error);
+      console.error('Error loading command desk:', error);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadData();
-    setRefreshing(false);
-  };
+  useEffect(() => {
+    loadDesk();
+  }, []);
 
-  const getAgentCards = () => [
-    { id: 1, name: 'Price Research', icon: 'pricetag', color: '#10B981', statusColor: '#10B981', currentTask: 'Scanning bulk deals', timeSaved: '5h → 15m' },
-    { id: 2, name: 'Partner Outreach', icon: 'people', color: '#F59E0B', statusColor: '#10B981', currentTask: 'Contacted 12 orgs', timeSaved: '8h → 30m' },
-    { id: 3, name: 'Content Creation', icon: 'create', color: '#8B5CF6', statusColor: '#6B7280', currentTask: 'Idle', timeSaved: '3h → 10m' },
-    { id: 4, name: 'Grant Research', icon: 'document-text', color: '#EF4444', statusColor: '#6B7280', currentTask: 'Idle', timeSaved: '4h → 20m' },
-    { id: 5, name: 'Data Analysis', icon: 'analytics', color: '#06B6D4', statusColor: '#10B981', currentTask: 'Processing metrics', timeSaved: '3h → 10m' },
-    { id: 6, name: 'Receipt Processing', icon: 'receipt', color: '#84CC16', statusColor: '#6B7280', currentTask: 'Idle', timeSaved: '2h → 5m' },
-    { id: 7, name: 'Meal Planner', icon: 'restaurant', color: '#F97316', statusColor: '#F59E0B', currentTask: 'Planning cookout', timeSaved: '8h → 20m' },
-    { id: 8, name: 'Volunteer Coord', icon: 'person-add', color: '#A855F7', statusColor: '#6B7280', currentTask: 'Idle', timeSaved: '4h → 15m' },
-  ];
+  const snapshotItems = useMemo(() => {
+    const foodBanks = mapFeed?.foodBanks || [];
+    const beacons = mapFeed?.beacons || [];
+    const liveEvents = mapFeed?.events || [];
+    const openNow = foodBanks.filter((item) => item.openNow === true).length;
+    const servingsPlanned = events.reduce((sum, event) => sum + (event.targetServings || 0), 0);
+
+    return [
+      { label: 'Open now', value: String(openNow), icon: 'business', color: '#34D399' },
+      { label: 'Beacons live', value: String(beacons.filter((item) => item.isActive).length), icon: 'radio', color: '#FB923C' },
+      { label: 'Public meals', value: String(liveEvents.length), icon: 'flame', color: '#A78BFA' },
+      { label: 'Servings', value: servingsPlanned.toLocaleString(), icon: 'restaurant', color: '#60A5FA' },
+    ];
+  }, [events, mapFeed]);
 
   if (loading) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#10B981" />
+      <View style={styles.loadingContainer}>
+        <AppScreenBackground variant="soft" />
+        <ActivityIndicator size="large" color="#34D399" />
       </View>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    >
-      {/* Hero Section */}
-      <View style={styles.hero}>
-        <View style={styles.heroContent}>
-          <Text style={styles.heroTitle}>Fighting Hunger</Text>
-          <Text style={styles.heroSubtitle}>Together</Text>
-          <Text style={styles.heroDescription}>
-            Connect with local food banks, track your impact, and help build stronger communities through transparent giving.
-          </Text>
-        </View>
-      </View>
+    <View style={styles.container}>
+      <AppScreenBackground variant="soft" />
 
-      {/* Quick Actions */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={[styles.actionButton, styles.primaryAction]}
-          onPress={() => navigation.navigate('Donate')}
-        >
-          <Ionicons name="heart" size={24} color="white" />
-          <Text style={styles.primaryActionText}>Donate Now</Text>
-        </TouchableOpacity>
-        <View style={styles.secondaryActions}>
-          <TouchableOpacity
-            style={styles.secondaryAction}
-            onPress={() => navigation.navigate('Map')}
-          >
-            <Ionicons name="location" size={20} color="#10B981" />
-            <Text style={styles.secondaryActionText}>Find Food Banks</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.secondaryAction}
-            onPress={() => navigation.navigate('Agents')}
-          >
-            <Ionicons name="bar-chart" size={20} color="#10B981" />
-            <Text style={styles.secondaryActionText}>View Impact</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Live Impact Metrics */}
-      {stats && (
-        <View style={styles.impactSection}>
-          <Text style={styles.sectionTitle}>🌟 Live Community Impact</Text>
-          <View style={styles.impactGrid}>
-            <View style={styles.impactCard}>
-              <Ionicons name="wallet" size={28} color="#10B981" />
-              <Text style={styles.impactValue}>
-                ${(stats.totalRaised / 100).toLocaleString()}
-              </Text>
-              <Text style={styles.impactLabel}>Total Raised</Text>
-            </View>
-            <View style={styles.impactCard}>
-              <Ionicons name="restaurant" size={28} color="#F59E0B" />
-              <Text style={styles.impactValue}>
-                {stats.mealsProvided.toLocaleString()}
-              </Text>
-              <Text style={styles.impactLabel}>Meals Provided</Text>
-            </View>
-            <View style={styles.impactCard}>
-              <Ionicons name="home" size={28} color="#8B5CF6" />
-              <Text style={styles.impactValue}>
-                {stats.familiesServed.toLocaleString()}
-              </Text>
-              <Text style={styles.impactLabel}>Families Served</Text>
-            </View>
-            <View style={styles.impactCard}>
-              <Ionicons name="people" size={28} color="#EF4444" />
-              <Text style={styles.impactValue}>{stats.totalDonations}</Text>
-              <Text style={styles.impactLabel}>Donations</Text>
-            </View>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDesk(true)} />}
+      >
+        <View style={styles.topStrip}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.pageLabel}>Command</Text>
+            <Text style={styles.pageTitle}>Launch food response fast.</Text>
+          </View>
+          <View style={styles.feedBadge}>
+            <Ionicons name="pulse" size={14} color="#A7F3D0" />
+            <Text style={styles.feedBadgeText}>{formatDateTime(mapFeed?.generatedAt)}</Text>
           </View>
         </View>
-      )}
 
-      {/* AI Agent Dashboard */}
-      <View style={styles.agentSection}>
-        <Text style={styles.sectionTitle}>🤖 AI Agent Dashboard</Text>
-        <Text style={styles.sectionSubtitle}>
-          11 AI agents automating 94% of manual tasks
-        </Text>
-
-        {/* Community Meal Planner Chat */}
-        <TouchableOpacity style={styles.chatCard} onPress={() => navigation.navigate('Agents')}>
-          <View style={styles.chatHeader}>
-            <View style={styles.chatIcon}>
-              <Ionicons name="chatbubbles" size={24} color="#8B5CF6" />
-            </View>
-            <View style={styles.chatInfo}>
-              <Text style={styles.chatTitle}>Plan Community Cookout</Text>
-              <Text style={styles.chatSubtext}>Chat with AI to organize meals & events</Text>
-            </View>
-            <Ionicons name="arrow-forward" size={20} color="#8B5CF6" />
-          </View>
-        </TouchableOpacity>
-
-        {/* Agent Grid */}
-        <View style={styles.agentGrid}>
-          {getAgentCards().map((agent) => (
-            <TouchableOpacity key={agent.id} style={styles.agentCard} onPress={() => navigation.navigate('Agents')}>
-              <View style={styles.agentCardHeader}>
-                <Ionicons name={agent.icon} size={20} color={agent.color} />
-                <View style={[styles.agentStatus, { backgroundColor: agent.statusColor }]} />
+        <View style={styles.snapshotStrip}>
+          {snapshotItems.map((item) => (
+            <GlassSurface key={item.label} style={styles.snapshotPill} padding={12}>
+              <View style={[styles.snapshotIcon, { backgroundColor: `${item.color}20` }]}>
+                <Ionicons name={item.icon} size={14} color={item.color} />
               </View>
-              <Text style={styles.agentName}>{agent.name}</Text>
-              <Text style={styles.agentTask}>{agent.currentTask}</Text>
-              <Text style={styles.agentSaved}>{agent.timeSaved}</Text>
-            </TouchableOpacity>
+              <Text style={styles.snapshotValue}>{item.value}</Text>
+              <Text style={styles.snapshotLabel}>{item.label}</Text>
+            </GlassSurface>
           ))}
         </View>
 
-        {/* Active Jobs Feed */}
-        <View style={styles.jobsFeed}>
-          <Text style={styles.feedTitle}>🔄 Live Agent Activity</Text>
-          <View style={styles.jobItem}>
-            <View style={styles.jobIcon}>
-              <Ionicons name="search" size={16} color="#10B981" />
-            </View>
-            <View style={styles.jobInfo}>
-              <Text style={styles.jobName}>Price Research Agent</Text>
-              <Text style={styles.jobStatus}>Finding bulk pasta deals... 87% complete</Text>
-            </View>
-            <Text style={styles.jobTime}>2m ago</Text>
-          </View>
-          <View style={styles.jobItem}>
-            <View style={styles.jobIcon}>
-              <Ionicons name="mail" size={16} color="#F59E0B" />
-            </View>
-            <View style={styles.jobInfo}>
-              <Text style={styles.jobName}>Partner Outreach Agent</Text>
-              <Text style={styles.jobStatus}>Contacted 5 churches, 3 responses</Text>
-            </View>
-            <Text style={styles.jobTime}>15m ago</Text>
-          </View>
-          <View style={styles.jobItem}>
-            <View style={styles.jobIcon}>
-              <Ionicons name="restaurant" size={16} color="#8B5CF6" />
-            </View>
-            <View style={styles.jobInfo}>
-              <Text style={styles.jobName}>Meal Planner Agent</Text>
-              <Text style={styles.jobStatus}>Planned cookout for 75 people, $367 budget</Text>
-            </View>
-            <Text style={styles.jobTime}>1h ago</Text>
-          </View>
-        </View>
-      </View>
+        <View style={[styles.launchRow, isWide && styles.launchRowWide]}>
+          <GlassSurface preset="dark" style={[styles.primaryLauncher, isWide && styles.primaryLauncherWide]} padding={18}>
+            <Text style={styles.launchEyebrow}>Primary action</Text>
+            <Text style={styles.launchTitle}>Open live map</Text>
+            <Text style={styles.launchBody}>Stay on the live surface with food banks, beacons, and public meals in one view.</Text>
+            <TouchableOpacity
+              style={styles.launchButtonPrimary}
+              onPress={() => navigation.navigate('Map')}
+              accessibilityRole="button"
+              accessibilityLabel="Open live map"
+            >
+              <Ionicons name="navigate" size={18} color="#07121F" />
+              <Text style={styles.launchButtonPrimaryText}>Open live map</Text>
+            </TouchableOpacity>
+          </GlassSurface>
 
-      {/* Bottom Spacer */}
-      <View style={styles.bottomSpacer} />
-    </ScrollView>
+          <GlassSurface style={[styles.primaryLauncher, styles.lightLauncher, isWide && styles.primaryLauncherWide]} padding={18}>
+            <Text style={styles.lightEyebrow}>Fast start</Text>
+            <Text style={styles.lightTitle}>Create meal event</Text>
+            <Text style={styles.lightBody}>Start a potluck, barbecue, or public meal without hunting through the app.</Text>
+            <TouchableOpacity
+              style={styles.launchButtonSecondary}
+              onPress={() => navigation.navigate('Map', { openEventComposer: true })}
+              accessibilityRole="button"
+              accessibilityLabel="Create meal event"
+            >
+              <Ionicons name="flame" size={18} color="#0F172A" />
+              <Text style={styles.launchButtonSecondaryText}>Create meal event</Text>
+            </TouchableOpacity>
+          </GlassSurface>
+        </View>
+
+        <GlassSurface style={styles.actionsBoard} padding={18}>
+          <View style={styles.boardHeader}>
+            <View>
+              <Text style={styles.boardTitle}>Immediate actions</Text>
+              <Text style={styles.boardSubtitle}>Everything here should move work forward in one tap.</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.subtleMapLink}
+              onPress={() => navigation.navigate('Map')}
+            >
+              <Text style={styles.subtleMapLinkText}>Map first</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.actionGrid}>
+            {SECONDARY_ACTIONS.map((action) => (
+              <TouchableOpacity
+                key={action.id}
+                style={styles.actionTile}
+                onPress={() => action.onPress(navigation)}
+                accessibilityRole="button"
+                accessibilityLabel={action.title}
+              >
+                <View style={[styles.actionIcon, { backgroundColor: `${action.color}18` }]}>
+                  <Ionicons name={action.icon} size={18} color={action.color} />
+                </View>
+                <View style={styles.actionCopy}>
+                  <Text style={styles.actionTitle}>{action.title}</Text>
+                  <Text style={styles.actionSubtitle}>{action.subtitle}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#64748B" />
+              </TouchableOpacity>
+            ))}
+          </View>
+        </GlassSurface>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    minHeight: 0,
   },
-  centerContainer: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#07121F',
   },
-
-  // Hero Section
-  hero: {
-    backgroundColor: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-    backgroundColor: '#10B981',
-    paddingTop: 60,
-    paddingBottom: 40,
-    paddingHorizontal: 20,
-  },
-  heroContent: {
-    alignItems: 'center',
-  },
-  heroTitle: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: 'white',
-    textAlign: 'center',
-  },
-  heroSubtitle: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#D1FAE5',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  heroDescription: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.9)',
-    textAlign: 'center',
-    lineHeight: 24,
-    maxWidth: 320,
-  },
-
-  // Quick Actions
-  quickActions: {
-    padding: 20,
-    paddingTop: 24,
-  },
-  primaryAction: {
-    backgroundColor: '#EF4444',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 16,
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  primaryActionText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  secondaryActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  secondaryAction: {
+  scroll: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+  },
+  content: {
+    flexGrow: 1,
+    paddingTop: 58,
+    paddingHorizontal: 16,
+    paddingBottom: 108,
+    gap: 14,
+  },
+  topStrip: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 12,
-    marginHorizontal: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  secondaryActionText: {
-    color: '#374151',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 6,
-  },
-
-  // Impact Section
-  impactSection: {
-    padding: 20,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  sectionSubtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 16,
-  },
-  impactGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    gap: 12,
   },
-  impactCard: {
-    width: '48%',
-    backgroundColor: 'white',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+  titleBlock: {
+    flex: 1,
   },
-  impactValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#111827',
-    marginTop: 8,
-  },
-  impactLabel: {
+  pageLabel: {
+    color: '#A7F3D0',
     fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
-    textAlign: 'center',
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
-
-  // AI Agent Section
-  agentSection: {
-    padding: 20,
-    paddingTop: 0,
+  pageTitle: {
+    color: 'white',
+    fontSize: 30,
+    lineHeight: 34,
+    fontWeight: '800',
   },
-
-  // Chat Card
-  chatCard: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  chatHeader: {
+  feedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 20,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15,23,42,0.46)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
   },
-  chatIcon: {
-    width: 48,
-    height: 48,
-    backgroundColor: '#F3E8FF',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
+  feedBadgeText: {
+    color: '#D1FAE5',
+    fontSize: 12,
+    fontWeight: '700',
   },
-  chatInfo: {
-    flex: 1,
-  },
-  chatTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  chatSubtext: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-
-  // Agent Grid
-  agentGrid: {
+  snapshotStrip: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: 24,
+    gap: 10,
   },
-  agentCard: {
-    width: '48%',
-    backgroundColor: 'white',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+  snapshotPill: {
+    minWidth: 150,
+    flex: 1,
   },
-  agentCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  snapshotIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  snapshotValue: {
+    color: '#0F172A',
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 4,
+    fontVariant: ['tabular-nums'],
+  },
+  snapshotLabel: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  launchRow: {
+    gap: 12,
+  },
+  launchRowWide: {
+    flexDirection: 'row',
+  },
+  primaryLauncher: {
+    overflow: 'hidden',
+  },
+  primaryLauncherWide: {
+    flex: 1,
+  },
+  lightLauncher: {
+    backgroundColor: 'transparent',
+  },
+  launchEyebrow: {
+    color: '#86EFAC',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
     marginBottom: 8,
   },
-  agentStatus: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  launchTitle: {
+    color: 'white',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+    marginBottom: 8,
   },
-  agentName: {
+  launchBody: {
+    color: '#D1FAE5',
     fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  agentTask: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  agentSaved: {
-    fontSize: 10,
-    color: '#10B981',
-    fontWeight: '600',
-  },
-
-  // Jobs Feed
-  jobsFeed: {
-    backgroundColor: 'white',
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  feedTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
+    lineHeight: 20,
     marginBottom: 16,
   },
-  jobItem: {
+  lightEyebrow: {
+    color: '#0F766E',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  lightTitle: {
+    color: '#0F172A',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  lightBody: {
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  launchButtonPrimary: {
+    alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#D1FAE5',
+    borderRadius: 999,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
   },
-  jobIcon: {
-    width: 32,
-    height: 32,
-    backgroundColor: '#F0FDF4',
-    borderRadius: 8,
+  launchButtonPrimaryText: {
+    color: '#07121F',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  launchButtonSecondary: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.84)',
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  jobInfo: {
+  launchButtonSecondaryText: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  actionsBoard: {
     flex: 1,
   },
-  jobName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
+  boardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 14,
+  },
+  boardTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  boardSubtitle: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  subtleMapLink: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15,118,110,0.10)',
+  },
+  subtleMapLinkText: {
+    color: '#0F766E',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  actionGrid: {
+    gap: 10,
+  },
+  actionTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(255,255,255,0.58)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.70)',
+  },
+  actionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionCopy: {
+    flex: 1,
+  },
+  actionTitle: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '800',
     marginBottom: 2,
   },
-  jobStatus: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  jobTime: {
-    fontSize: 12,
-    color: '#9CA3AF',
-  },
-
-  // Bottom Spacer
-  bottomSpacer: {
-    height: 20,
+  actionSubtitle: {
+    color: '#475569',
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

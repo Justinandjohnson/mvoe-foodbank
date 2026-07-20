@@ -70,6 +70,7 @@ export default function ImpactScreen() {
   return (
     <ScrollView
       style={styles.container}
+      contentContainerStyle={styles.scrollContent}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
@@ -139,7 +140,13 @@ export default function ImpactScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
     backgroundColor: '#F9FAFB',
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 32,
   },
   centerContainer: {
     flex: 1,

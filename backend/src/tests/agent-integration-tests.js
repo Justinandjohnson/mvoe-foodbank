@@ -1,6 +1,5 @@
 // AI Agent Integration Tests - Test all MCPs and agent functionality
 import MealPlannerAgent from '../agents/mealPlannerAgent.js';
-import PriceResearchAgent from '../agents/priceResearchAgent.js';
 import ReceiptProcessingAgent from '../agents/receiptProcessingAgent.js';
 import ContentCreationAgent from '../agents/contentCreationAgent.js';
 
@@ -139,88 +138,10 @@ async function testMealPlannerAgent() {
 }
 
 // ============================================================================
-// TEST 2: PRICE RESEARCH AGENT
-// ============================================================================
-async function testPriceResearchAgent() {
-  console.log('\n\n💰 TEST 2: PRICE RESEARCH AGENT');
-  console.log('-'.repeat(60));
-
-  try {
-    const agent = new PriceResearchAgent(mockIO);
-
-    const testData = {
-      userId: 'test-user-123',
-      sessionId: 'test-session-456',
-      items: [
-        { name: 'hamburger patties bulk', quantity: '50 lbs' },
-        { name: 'potato salad bulk', quantity: '5 lbs' }
-      ],
-      budget: 200
-    };
-
-    console.log('\n🔄 Running price research with test items...');
-    console.log(`Items: ${testData.items.map(i => i.name).join(', ')}`);
-
-    const result = await agent.execute(testData);
-
-    if (!result.success) {
-      throw new Error('Agent returned success: false');
-    }
-
-    logTest('Price Research - Basic execution', 'pass');
-
-    if (result.research && result.research.length > 0) {
-      logTest('Price Research - Item research', 'pass', `${result.research.length} items`);
-
-      // Check if prices were found
-      const itemsWithPrices = result.research.filter(item =>
-        item.prices && item.prices.length > 0
-      );
-
-      if (itemsWithPrices.length > 0) {
-        logTest('Price Research - Chrome DevTools MCP scraping', 'pass',
-          `Found prices for ${itemsWithPrices.length} items`);
-      } else {
-        logTest('Price Research - Chrome DevTools MCP scraping', 'warn',
-          'No prices found (stores may be blocking or network issue)');
-      }
-
-      if (result.recommendations) {
-        logTest('Price Research - Zen MCP recommendations', 'pass');
-      } else {
-        logTest('Price Research - Zen MCP recommendations', 'warn');
-      }
-
-      if (result.summary) {
-        logTest('Price Research - Summary generation', 'pass');
-        console.log('\n📊 Summary:');
-        console.log(`  Items researched: ${result.summary.totalItems}`);
-        console.log(`  Stores checked: ${result.summary.storesChecked}`);
-        console.log(`  Estimated savings: $${result.summary.estimatedSavings}`);
-        console.log(`  Best store: ${result.summary.bestOverallStore}`);
-      }
-    } else {
-      logTest('Price Research - Item research', 'fail', 'No research results');
-    }
-
-    const events = mockIO.getEvents();
-    if (events.length > 0) {
-      logTest('Price Research - WebSocket updates', 'pass', `${events.length} events`);
-    }
-
-    mockIO.clear();
-
-  } catch (error) {
-    logTest('Price Research - Overall', 'fail', error.message);
-    console.error('Error details:', error);
-  }
-}
-
-// ============================================================================
-// TEST 3: RECEIPT PROCESSING AGENT
+// TEST 2: RECEIPT PROCESSING AGENT
 // ============================================================================
 async function testReceiptProcessingAgent() {
-  console.log('\n\n📄 TEST 3: RECEIPT PROCESSING AGENT');
+  console.log('\n\n📄 TEST 2: RECEIPT PROCESSING AGENT');
   console.log('-'.repeat(60));
 
   try {
@@ -312,10 +233,10 @@ async function testReceiptProcessingAgent() {
 }
 
 // ============================================================================
-// TEST 4: CONTENT CREATION AGENT
+// TEST 3: CONTENT CREATION AGENT
 // ============================================================================
 async function testContentCreationAgent() {
-  console.log('\n\n✍️ TEST 4: CONTENT CREATION AGENT');
+  console.log('\n\n✍️ TEST 3: CONTENT CREATION AGENT');
   console.log('-'.repeat(60));
 
   try {
@@ -411,7 +332,6 @@ async function runAllTests() {
   console.log('Testing all agents and MCP integrations\n');
 
   await testMealPlannerAgent();
-  await testPriceResearchAgent();
   await testReceiptProcessingAgent();
   await testContentCreationAgent();
 

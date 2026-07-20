@@ -40,7 +40,7 @@ export default function OrganizationSettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         <Text style={styles.title}>Organization Settings</Text>
         <Text style={styles.subtitle}>
           Manage your food bank's information and settings
@@ -79,10 +79,18 @@ export default function OrganizationSettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: '#F9FAFB',
   },
+  scroll: {
+    flex: 1,
+    flexBasis: 0,
+    minHeight: 0,
+  },
   content: {
+    flexGrow: 1,
     padding: 20,
+    paddingBottom: 32,
   },
   title: {
     fontSize: 24,
