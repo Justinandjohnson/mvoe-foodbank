@@ -60,3 +60,6 @@ prisma/migrations/*.sql
 # Env files in every shape — .env alone missed .env.production and backups
 .env.*
 !.env.example
+
+__pycache__/
+*.pyc
