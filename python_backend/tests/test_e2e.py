@@ -7,6 +7,7 @@ API tests use httpx through the full middleware stack.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -20,7 +21,8 @@ from app.config import settings
 from app.encryption import encrypt_secret
 
 BASE_URL = "http://localhost:8001"
-OPENROUTER_KEY = "REDACTED_OPENROUTER_KEY"
+# Set OPENROUTER_API_KEY in your environment (e.g. .env) — never hardcode it here.
+OPENROUTER_KEY = os.environ["OPENROUTER_API_KEY"]
 
 # Superuser connection for fixture setup — bypasses RLS intentionally.
 _SUPERUSER_URL = "postgresql://jjohnson@localhost:5432/mvoe_dev"
