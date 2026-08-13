@@ -3,6 +3,7 @@ import { getPrismaClient } from '../utils/database.js';
 import { getRedisClient } from '../utils/redis.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
 import logger from '../utils/logger.js';
+import { directionsUrl } from './beacon.geo.js';
 
 const prisma = getPrismaClient();
 const redis = getRedisClient();
@@ -67,6 +68,11 @@ class FoodBankService {
       ...fb,
       distance: parseFloat(fb.distance.toFixed(2)),
       hours: fb.hours ? JSON.parse(fb.hours) : null,
+      // One-tap navigation. Coordinates beat a name search: a text query can
+      // resolve to the wrong branch, a lat/lng cannot.
+      directionsUrl: fb.latitude != null && fb.longitude != null
+        ? directionsUrl(fb.latitude, fb.longitude, fb.name)
+        : null,
     }));
   }
 
@@ -202,6 +208,9 @@ class FoodBankService {
     return foodBanks.map((fb) => ({
       ...fb,
       hours: fb.hours ? JSON.parse(fb.hours) : null,
+      directionsUrl: fb.latitude != null && fb.longitude != null
+        ? directionsUrl(fb.latitude, fb.longitude, fb.name)
+        : null,
     }));
   }
 }
