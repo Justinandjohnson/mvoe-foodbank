@@ -415,6 +415,7 @@ function isAuthRequiredError(error) {
 export default function MapScreen({ navigation, route }) {
   const { isAuthenticated, isStaffMember } = useAuth();
   const { width: windowWidth } = useWindowDimensions();
+  const isMobile = windowWidth < 768;
   const handledRouteIntentRef = useRef('');
   const beaconComposerAnim = useRef(new Animated.Value(0)).current;
   const eventComposerAnim = useRef(new Animated.Value(0)).current;
@@ -437,6 +438,8 @@ export default function MapScreen({ navigation, route }) {
   const [volunteerEditorVisible, setVolunteerEditorVisible] = useState(false);
   const [calendarPanelVisible, setCalendarPanelVisible] = useState(false);
   const [markerDetailVisible, setMarkerDetailVisible] = useState(false);
+  const [heroCollapsed, setHeroCollapsed] = useState(true);
+  const showHeroBody = !isMobile || !heroCollapsed;
   const [layers, setLayers] = useState({
     foodBanks: true,
     beacons: true,
@@ -1803,12 +1806,29 @@ export default function MapScreen({ navigation, route }) {
               <View style={styles.heroCopy}>
                 <Text style={styles.heroEyebrow}>MVOE live map</Text>
                 <Text style={styles.heroTitle}>Food access, neighbor beacons, and public meals in one view.</Text>
-                <Text style={styles.heroText}>
-                  Keep the map as the working surface. Beacons, verified hours, and meal gatherings all land here.
-                </Text>
+                {showHeroBody ? (
+                  <Text style={styles.heroText}>
+                    Keep the map as the working surface. Beacons, verified hours, and meal gatherings all land here.
+                  </Text>
+                ) : null}
               </View>
 
               <View style={styles.heroActions}>
+                {isMobile ? (
+                  <TouchableOpacity
+                    style={styles.iconButton}
+                    onPress={() => setHeroCollapsed((current) => !current)}
+                    accessibilityLabel={heroCollapsed ? 'Expand map panel' : 'Collapse map panel'}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons
+                      name={heroCollapsed ? 'chevron-down' : 'chevron-up'}
+                      size={18}
+                      color="white"
+                    />
+                  </TouchableOpacity>
+                ) : null}
+
                 <TouchableOpacity style={styles.iconButton} onPress={handleRefresh}>
                   {refreshing ? (
                     <ActivityIndicator size="small" color="white" />
@@ -1845,6 +1865,8 @@ export default function MapScreen({ navigation, route }) {
               </View>
             </View>
 
+            {showHeroBody ? (
+            <>
             <View style={styles.statusRow}>
               <View style={[
                 styles.statusBadge,
@@ -1903,8 +1925,12 @@ export default function MapScreen({ navigation, route }) {
                 <Text style={styles.quickActionText}>Volunteer ops</Text>
               </TouchableOpacity>
             </View>
+            </>
+            ) : null}
           </LinearGradient>
 
+          {showHeroBody ? (
+          <>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -1997,6 +2023,8 @@ export default function MapScreen({ navigation, route }) {
               />
             </TouchableOpacity>
           </View>
+          </>
+          ) : null}
         </View>
 
         {calendarPanelVisible ? (
