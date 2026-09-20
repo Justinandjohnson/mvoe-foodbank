@@ -119,7 +119,7 @@ function buildMapHtml() {
       dragging: true
     });
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", { maxZoom: 19 }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
 
     function makeIcon(marker, isSelected) {
       return L.divIcon({
