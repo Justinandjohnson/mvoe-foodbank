@@ -18,6 +18,7 @@ import donationRoutes from './routes/donation.routes.js';
 import organizationRoutes from './routes/organization.routes.js';
 import ledgerRoutes from './routes/ledger.routes.js';
 import userRoutes from './routes/user.routes.js';
+import beaconRoutes from './routes/beacon.routes.js';
 import foodbankRoutes from './routes/foodbank.routes.js';
 import communityRoutes from './routes/community.routes.js';
 import mapRoutes from './routes/map.routes.js';
@@ -150,6 +151,7 @@ async function registerRoutes() {
   await fastify.register(ledgerRoutes, { prefix: '/api/ledger' });
   await fastify.register(userRoutes, { prefix: '/api/user' });
   await fastify.register(foodbankRoutes, { prefix: '/api/food-banks' });
+  await fastify.register(beaconRoutes, { prefix: '/api/beacons' });
   await fastify.register(communityRoutes, { prefix: '/api' });
   await fastify.register(mapRoutes, { prefix: '/api' });
   await fastify.register(foodBankDirectoryRoutes, { prefix: '/api' });

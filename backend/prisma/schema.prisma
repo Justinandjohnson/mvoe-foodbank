@@ -929,3 +929,29 @@ model StoredImage {
 
   @@map("stored_images")
 }
+
+/// A person or group offering food right now. Short-lived by design: a beacon
+/// represents "I have food available at this spot until expiresAt", not a venue.
+/// Food banks are Organizations; beacons are everyone else.
+model Beacon {
+  id           String   @id @default(uuid())
+  title        String
+  description  String?
+  foodType     String?  @map("food_type") // 'produce', 'prepared', 'pantry', 'bakery', 'other'
+  servings     Int?
+  latitude     Float
+  longitude    Float
+  address      String?
+  contactName  String?  @map("contact_name")
+  contactPhone String?  @map("contact_phone")
+  createdBy    String?  @map("created_by") // User id when authenticated
+  isActive     Boolean  @default(true) @map("is_active")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([latitude, longitude])
+  @@index([expiresAt])
+  @@index([isActive])
+  @@map("beacons")
+}
