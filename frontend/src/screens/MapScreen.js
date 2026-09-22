@@ -505,7 +505,8 @@ export default function MapScreen({ navigation, route }) {
   const [calendarPanelVisible, setCalendarPanelVisible] = useState(false);
   const [markerDetailVisible, setMarkerDetailVisible] = useState(false);
   const [heroCollapsed, setHeroCollapsed] = useState(true);
-  const showHeroBody = !isMobile || !heroCollapsed;
+  const anyComposerOpen = beaconEditorVisible || eventEditorVisible || volunteerEditorVisible;
+  const showHeroBody = !anyComposerOpen && (!isMobile || !heroCollapsed);
   const [layers, setLayers] = useState({
     foodBanks: true,
     beacons: true,
@@ -753,7 +754,7 @@ export default function MapScreen({ navigation, route }) {
   useEffect(() => {
     const initialize = async () => {
       await loadLiveFeed(null, { showSpinner: true, radiusOverride: 25 });
-      await locateUser(false, { focusMap: false });
+      await locateUser(false, { focusMap: true });
     };
 
     initialize();
@@ -1358,6 +1359,7 @@ export default function MapScreen({ navigation, route }) {
       return;
     }
 
+    setHeroCollapsed(true);
     hideBeaconComposer({ immediate: true });
     hideEventComposer({ immediate: true });
     setCalendarPanelVisible(false);
@@ -1499,6 +1501,7 @@ export default function MapScreen({ navigation, route }) {
   }
 
   async function openBeaconComposer() {
+    setHeroCollapsed(true);
     hideEventComposer({ immediate: true });
     hideVolunteerComposer({ immediate: true });
     setCalendarPanelVisible(false);
@@ -1530,6 +1533,7 @@ export default function MapScreen({ navigation, route }) {
   }
 
   async function openEventComposer(initialDraft = null) {
+    setHeroCollapsed(true);
     hideBeaconComposer({ immediate: true });
     hideVolunteerComposer({ immediate: true });
     setCalendarPanelVisible(false);
@@ -1864,33 +1868,36 @@ export default function MapScreen({ navigation, route }) {
 
       <View pointerEvents="box-none" style={styles.overlay}>
         <View style={styles.topStack}>
+          {anyComposerOpen ? null : isMobile && heroCollapsed ? (
+            <TouchableOpacity
+              style={styles.heroLauncher}
+              onPress={() => setHeroCollapsed(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Open live map panel"
+            >
+              <Ionicons name="map" size={16} color="#34D399" />
+              <Text style={styles.heroLauncherText}>MVOE live map</Text>
+              <Ionicons name="chevron-down" size={16} color="#CBD5E1" />
+            </TouchableOpacity>
+          ) : (
           <LinearGradient
             colors={['rgba(15,23,42,0.92)', 'rgba(10,37,64,0.76)']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={[styles.heroCard, { width: compactHeroWidth }]}
           >
-            <View style={styles.heroHeader}>
-              <View style={styles.heroCopy}>
-                {showHeroBody ? (
-                  <Text style={styles.heroEyebrow}>MVOE live map</Text>
-                ) : null}
-                <Text
-                  style={showHeroBody ? styles.heroTitle : styles.heroTitleCompact}
-                  numberOfLines={showHeroBody ? undefined : 1}
-                >
-                  {showHeroBody
-                    ? 'Food access, neighbor beacons, and public meals in one view.'
-                    : 'MVOE live map'}
-                </Text>
-                {showHeroBody ? (
+<View style={[styles.heroHeader, isMobile && styles.heroHeaderMobile]}>
+              <View style={[styles.heroCopy, isMobile && styles.heroCopyMobile]}>
+                <Text style={styles.heroEyebrow}>MVOE live map</Text>
+                <Text style={[styles.heroTitle, isMobile && styles.heroTitleMobile]}>Food access, neighbor beacons, and public meals in one view.</Text>
+                {showHeroBody && !isMobile ? (
                   <Text style={styles.heroText}>
                     Keep the map as the working surface. Beacons, verified hours, and meal gatherings all land here.
                   </Text>
                 ) : null}
               </View>
 
-              <View style={styles.heroActions}>
+              <View style={[styles.heroActions, isMobile && styles.heroActionsMobile]}>
                 {isMobile ? (
                   <TouchableOpacity
                     style={styles.iconButton}
@@ -2005,6 +2012,7 @@ export default function MapScreen({ navigation, route }) {
             </>
             ) : null}
           </LinearGradient>
+          )}
 
           {showHeroBody ? (
           <>
@@ -2182,6 +2190,7 @@ export default function MapScreen({ navigation, route }) {
           </View>
         ) : null}
 
+        {isMobile && !heroCollapsed ? null : (
         <View style={styles.fabColumn}>
           <TouchableOpacity
             style={[styles.fab, styles.primaryFab]}
@@ -2203,6 +2212,7 @@ export default function MapScreen({ navigation, route }) {
             <Ionicons name="locate" size={18} color="#E2E8F0" />
           </TouchableOpacity>
         </View>
+        )}
 
         {selectedMarker && !beaconEditorVisible && !eventEditorVisible && !volunteerEditorVisible ? (
           <View style={styles.markerMiniCard}>
@@ -2446,7 +2456,7 @@ export default function MapScreen({ navigation, route }) {
             ]}
           >
             <LinearGradient
-              colors={['rgba(255,255,255,0.94)', 'rgba(241,245,249,0.84)']}
+              colors={['rgba(255,255,255,1)', 'rgba(241,245,249,1)']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.beaconComposerGlass}
@@ -2690,7 +2700,7 @@ export default function MapScreen({ navigation, route }) {
             ]}
           >
             <LinearGradient
-              colors={['rgba(255,255,255,0.94)', 'rgba(239,246,255,0.84)']}
+              colors={['rgba(255,255,255,1)', 'rgba(239,246,255,1)']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.eventComposerGlass}
@@ -2891,7 +2901,7 @@ export default function MapScreen({ navigation, route }) {
             ]}
           >
             <LinearGradient
-              colors={['rgba(255,255,255,0.94)', 'rgba(236,253,245,0.84)']}
+              colors={['rgba(255,255,255,1)', 'rgba(236,253,245,1)']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.volunteerComposerGlass}
@@ -3250,15 +3260,45 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.32,
     shadowRadius: 26,
   },
+  heroLauncher: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15,23,42,0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.32,
+    shadowRadius: 16,
+  },
+  heroLauncherText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: 'white',
+    letterSpacing: 0.3,
+  },
   heroHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 8,
   },
+  heroHeaderMobile: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 12,
+  },
   heroCopy: {
     flex: 1,
     paddingRight: 12,
+  },
+  heroCopyMobile: {
+    paddingRight: 0,
   },
   heroEyebrow: {
     fontSize: 11,
@@ -3275,11 +3315,10 @@ const styles = StyleSheet.create({
     color: 'white',
     marginBottom: 6,
   },
-  heroTitleCompact: {
-    fontSize: 14,
-    lineHeight: 18,
-    fontWeight: '700',
-    color: 'white',
+heroTitleMobile: {
+    fontSize: 15,
+    lineHeight: 20,
+    marginBottom: 0,
   },
   heroText: {
     fontSize: 13,
@@ -3289,6 +3328,9 @@ const styles = StyleSheet.create({
   heroActions: {
     flexDirection: 'row',
     gap: 8,
+  },
+  heroActionsMobile: {
+    justifyContent: 'flex-end',
   },
   iconButton: {
     width: 34,
