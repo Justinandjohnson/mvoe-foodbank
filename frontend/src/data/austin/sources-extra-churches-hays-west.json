@@ -1,0 +1,172 @@
+[
+  {
+    "url": "https://www.centraltexasfoodbank.org/media/823/download",
+    "what": "Central Texas Food Bank 'Emergency Food Assistance Referral List' PDF (18 pages, updated 8/20/2025) — full county-by-county partner agency listings with exact addresses/phones/hours for Hays, Bastrop, Caldwell, Burnet, Blanco, Bell counties etc.",
+    "how_to_scrape": "Downloaded with curl, extracted text locally with pymupdf (fitz.open + page.get_text()), no OCR needed (native text PDF)"
+  },
+  {
+    "url": "https://www.budatx.gov/DocumentCenter/View/16298",
+    "what": "City of Buda 'Buda & Hays County Senior & Community Food Assistance Resources' PDF flyer — food pantries, senior meals, utility assistance orgs in Buda/Hays/west Austin area with addresses/phones/hours",
+    "how_to_scrape": "Downloaded with curl, extracted text locally with pymupdf (fitz.open + page.get_text()), native text PDF"
+  },
+  {
+    "url": "https://budaumc.org/wp-content/uploads/2025/09/food-pantry_map_8x11.pdf",
+    "what": "Buda UMC campus parking/entrance map PDF for food pantry visitors",
+    "how_to_scrape": "Downloaded with curl, opened with pymupdf; page is a graphical campus map with minimal extractable text (non-Latin1 glyphs), no new pantry facts beyond what's on budaumc.org"
+  },
+  {
+    "url": "https://haysfoodbank.org/get-help/",
+    "what": "Hays County Food Bank – primary site plus list of partner distribution sites (Kyle, Buda, Wimberley, Uhland) with days/times",
+    "how_to_scrape": "WebFetch of page, extracted distribution site table"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/location/hays-county-food-bank",
+    "what": "Central Texas Food Bank location page for Hays County Food Bank main site",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/location/first-baptist-church-kyle",
+    "what": "First Baptist Church Kyle food pantry hours/address",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://samckyle.org/hays-food-bank",
+    "what": "St. Anthony Marie de Claret Catholic Church (Kyle) Hays Food Bank distribution page",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://budaumc.org/food-and-social-services-assistance/",
+    "what": "Buda United Methodist Church food pantry program details, hours, service area, phone",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://stmartindp.org/our-food-pantry",
+    "what": "St. Martin de Porres Catholic Church (Dripping Springs) food pantry page",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://stmartindp.org/svdp",
+    "what": "Society of St. Vincent de Paul conference at St. Martin de Porres (Dripping Springs) page",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.helpinghands-drippingsprings.org/food-pantry",
+    "what": "Dripping Springs Helping Hands food pantry page",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.dos.txst.edu/services/care-team/sm-rr-resources/food.html",
+    "what": "Texas State Dean of Students food security resources page including Southside Community Center details",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://riotexas.org/stories/2025/11/3/rio-texas-conference-food-pantries-resources",
+    "what": "Rio Texas Annual (UMC) Conference article listing UMC food pantries and community meals across the region",
+    "how_to_scrape": "WebFetch of page, extracted UMC entries relevant to Hays County and west/southwest Austin"
+  },
+  {
+    "url": "https://feedingwimberley.org/",
+    "what": "Feeding Wimberley directory of Wimberley-area food resources (Crisis Bread Basket, Fig Tree, Mercado, Meals on Wheels)",
+    "how_to_scrape": "WebFetch of page, extracted program list"
+  },
+  {
+    "url": "https://www.findhelp.org/wimberley-crisis-bread-basket--wimberley-tx--food-pantry/5750162540462080",
+    "what": "Wimberley Crisis Bread Basket findhelp.org listing with phone/hours",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.faithstreet.com/church/wimberley-christian-church-wimberley-tx",
+    "what": "Wimberley Christian Church directory listing",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://ltcrisisministries.org/services/",
+    "what": "Lake Travis Crisis Ministries services page including food pantry hours/address and service area (Lake Travis ISD boundary incl. 78734/78738/78669)",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.manchacaumc.org/food-pantry",
+    "what": "Manchaca United Methodist Church food pantry page with address, phone, hours",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.bastropcares.org/resources/cedar-creek-united-methodist-church-food-pantry/",
+    "what": "Bastrop County Cares resource page for Cedar Creek United Methodist Church food pantry",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.findhelp.org/friendship-bible-baptist-church---community-of-hope-food-pantry--cedar-creek-tx--food-pantry/5154691980460032",
+    "what": "Friendship Bible Baptist Church (Cedar Creek) Community of Hope Food Pantry findhelp.org listing",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/program-partners",
+    "what": "Central Texas Food Bank program partners list (used for Caldwell County Christian Ministries, Lockhart)",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.findhelp.org/food/food-pantry--lockhart-tx",
+    "what": "findhelp.org Lockhart TX food pantry directory (St. Mary of the Visitation SVdP conference)",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://bobcatbounty.txst.edu/about-us/hours.html",
+    "what": "Bobcat Bounty (Texas State University) hours and location page",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://bobcatbounty.txst.edu/",
+    "what": "Bobcat Bounty homepage, program overview",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.findhelp.org/provider/helping-hand-crisis-ministry-of-spicewood--spicewood-tx/6375601292705792",
+    "what": "Helping Hand Crisis Ministry of Spicewood findhelp.org listing with address/phone",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://marblefallscofc.org/ministries/pages/food-pantry",
+    "what": "Marble Falls Church of Christ food pantry ministry page",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.findhelp.org/first-baptist-church-marble-falls--marble-falls-tx--food-pantry/6196367893200896",
+    "what": "First Baptist Church Marble Falls findhelp.org listing",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.helpingcenter.org/",
+    "what": "The Helping Center of Marble Falls Area homepage",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://connectatx.findhelp.com/society-of-saint-vincent-de-paul-diocesan-council-of-austin--austin-tx--food-pantry/5594227486621696",
+    "what": "Society of St. Vincent de Paul Diocesan Council of Austin main food pantry listing, covers 25 counties incl. Hays via parish conferences",
+    "how_to_scrape": "WebSearch result summary"
+  },
+  {
+    "url": "https://www.foodpantries.org/co/tx-hays",
+    "what": "foodpantries.org directory of Hays County food pantries",
+    "how_to_scrape": "WebFetch of page listing"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-wimberley",
+    "what": "foodpantries.org Wimberley city directory",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-dripping_springs",
+    "what": "foodpantries.org Dripping Springs city directory",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-buda",
+    "what": "foodpantries.org Buda city directory",
+    "how_to_scrape": "WebSearch result snippet"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-marble_falls",
+    "what": "foodpantries.org Marble Falls city directory",
+    "how_to_scrape": "WebSearch result snippet"
+  }
+]

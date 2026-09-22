@@ -40,11 +40,41 @@ import { publicPhotoUrl } from '../api/supabaseClient';
 import { pickAndUploadImage } from '../api/imageUpload';
 import { useAuth } from '../contexts/AuthContext';
 import { config } from '../../config';
+import austinFoodIndex from '../data/austinFoodIndex.json';
+
+const AUSTIN_TYPE_LABELS = {
+  food_bank: 'Food Bank',
+  pantry: 'Pantry',
+  community_fridge: 'Community Fridge',
+  meal: 'Meal',
+  program: 'Program',
+  event: 'Event',
+};
+
+const AUSTIN_INDEX_MARKERS = (austinFoodIndex?.entries || [])
+  .filter((entry) => Number.isFinite(Number(entry?.lat)) && Number.isFinite(Number(entry?.lng)) && entry?.id)
+  .map((entry) => ({
+    id: `austin-${entry.id}`,
+    source: 'austinIndex',
+    markerType: `austin_${entry.type || 'program'}`,
+    austinType: entry.type || 'program',
+    name: entry.name || 'Untitled location',
+    lat: Number(entry.lat),
+    lng: Number(entry.lng),
+    address: entry.address || '',
+    phone: entry.phone || '',
+    website: entry.website || entry.source_url || '',
+    hours: entry.hours || '',
+    eligibility: entry.eligibility || '',
+    event_date: entry.event_date || null,
+    last_verified: entry.last_verified || null,
+  }));
 
 const LAYER_OPTIONS = [
   { key: 'foodBanks', label: 'Food Banks', icon: 'business', color: '#22C55E' },
   { key: 'beacons', label: 'Beacons', icon: 'radio', color: '#F97316' },
   { key: 'events', label: 'Meals', icon: 'flame', color: '#8B5CF6' },
+  { key: 'austinIndex', label: 'Community Index', icon: 'basket', color: '#0EA5E9' },
 ];
 
 const RADIUS_OPTIONS = [10, 25, 50];
@@ -217,7 +247,31 @@ function getOpenStateLabel(marker) {
   return 'Hours pending';
 }
 
+const AUSTIN_TYPE_COLORS = {
+  food_bank: '#22C55E',
+  pantry: '#0EA5E9',
+  community_fridge: '#06B6D4',
+  meal: '#8B5CF6',
+  program: '#F59E0B',
+  event: '#F97316',
+};
+
+function getMarkerTypeLabel(marker) {
+  if (!marker) return '';
+  if (marker.source === 'austinIndex') {
+    return AUSTIN_TYPE_LABELS[marker.austinType] || 'Community listing';
+  }
+  if (marker.markerType === 'food_bank') return 'Food bank';
+  if (marker.markerType === 'food_beacon') return 'Food beacon';
+  return 'Meal event';
+}
+
 function getAvailabilityStatus(marker) {
+  if (marker.source === 'austinIndex') {
+    if (marker.event_date) return formatDateTime(marker.event_date);
+    return marker.hours || 'Info pending';
+  }
+
   if (marker.markerType === 'food_beacon') {
     return marker.isActive ? 'Live beacon' : 'Beacon off';
   }
@@ -233,6 +287,10 @@ function getAvailabilityStatus(marker) {
 }
 
 function getMarkerAddress(marker) {
+  if (marker.source === 'austinIndex') {
+    return marker.address || 'Location pending';
+  }
+
   if (marker.markerType === 'community_event') {
     return marker.address || marker.location || 'Location pending';
   }
@@ -250,6 +308,10 @@ function getMarkerAddress(marker) {
 function getMarkerSubtitle(marker) {
   if (!marker) return '';
 
+  if (marker.source === 'austinIndex') {
+    return marker.eligibility || AUSTIN_TYPE_LABELS[marker.austinType] || 'Community listing';
+  }
+
   if (marker.markerType === 'community_event') {
     return EVENT_TYPE_LABELS[marker.eventType] || 'Public meal event';
   }
@@ -262,6 +324,10 @@ function getMarkerSubtitle(marker) {
 }
 
 function getMarkerAccentColor(marker) {
+  if (marker.source === 'austinIndex') {
+    return AUSTIN_TYPE_COLORS[marker.austinType] || '#64748B';
+  }
+
   if (marker.markerType === 'food_beacon') {
     return marker.quantityLevel === 'many' ? '#10B981' : marker.quantityLevel === 'few' ? '#F59E0B' : '#22C55E';
   }
@@ -444,6 +510,7 @@ export default function MapScreen({ navigation, route }) {
     foodBanks: true,
     beacons: true,
     events: true,
+    austinIndex: true,
   });
   const [feed, setFeed] = useState({
     foodBanks: [],
@@ -575,6 +642,7 @@ export default function MapScreen({ navigation, route }) {
     if (layers.foodBanks) markers.push(...feed.foodBanks);
     if (layers.beacons) markers.push(...feed.beacons);
     if (layers.events) markers.push(...feed.events);
+    if (layers.austinIndex) markers.push(...AUSTIN_INDEX_MARKERS);
 
     return markers.filter(
       (marker) => typeof marker.lat === 'number' && typeof marker.lng === 'number'
@@ -1804,8 +1872,17 @@ export default function MapScreen({ navigation, route }) {
           >
             <View style={styles.heroHeader}>
               <View style={styles.heroCopy}>
-                <Text style={styles.heroEyebrow}>MVOE live map</Text>
-                <Text style={styles.heroTitle}>Food access, neighbor beacons, and public meals in one view.</Text>
+                {showHeroBody ? (
+                  <Text style={styles.heroEyebrow}>MVOE live map</Text>
+                ) : null}
+                <Text
+                  style={showHeroBody ? styles.heroTitle : styles.heroTitleCompact}
+                  numberOfLines={showHeroBody ? undefined : 1}
+                >
+                  {showHeroBody
+                    ? 'Food access, neighbor beacons, and public meals in one view.'
+                    : 'MVOE live map'}
+                </Text>
                 {showHeroBody ? (
                   <Text style={styles.heroText}>
                     Keep the map as the working surface. Beacons, verified hours, and meal gatherings all land here.
@@ -1941,7 +2018,9 @@ export default function MapScreen({ navigation, route }) {
                 ? feed.foodBanks.length
                 : layer.key === 'beacons'
                   ? feed.beacons.length
-                  : feed.events.length;
+                  : layer.key === 'austinIndex'
+                    ? AUSTIN_INDEX_MARKERS.length
+                    : feed.events.length;
 
               const active = layers[layer.key];
 
@@ -2140,11 +2219,7 @@ export default function MapScreen({ navigation, route }) {
                     { color: getMarkerAccentColor(selectedMarker) },
                   ]}
                 >
-                  {selectedMarker.markerType === 'food_bank'
-                    ? 'Food bank'
-                    : selectedMarker.markerType === 'food_beacon'
-                      ? 'Food beacon'
-                      : 'Meal event'}
+                  {getMarkerTypeLabel(selectedMarker)}
                 </Text>
               </View>
 
@@ -2215,11 +2290,7 @@ export default function MapScreen({ navigation, route }) {
                     { color: getMarkerAccentColor(selectedMarker) },
                   ]}
                 >
-                  {selectedMarker.markerType === 'food_bank'
-                    ? 'Food bank'
-                    : selectedMarker.markerType === 'food_beacon'
-                      ? 'Food beacon'
-                      : 'Meal event'}
+                  {getMarkerTypeLabel(selectedMarker)}
                 </Text>
               </View>
 
@@ -2301,13 +2372,23 @@ export default function MapScreen({ navigation, route }) {
                 <Text style={styles.secondaryActionText}>Copy address</Text>
               </TouchableOpacity>
 
-              {selectedMarker.markerType === 'food_bank' && selectedMarker.phone ? (
+              {(selectedMarker.markerType === 'food_bank' || selectedMarker.source === 'austinIndex') && selectedMarker.phone ? (
                 <TouchableOpacity
                   style={styles.secondaryActionButton}
                   onPress={() => handleCall(selectedMarker.phone)}
                 >
                   <Ionicons name="call" size={16} color="#0F172A" />
                   <Text style={styles.secondaryActionText}>Call</Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {selectedMarker.source === 'austinIndex' && selectedMarker.website ? (
+                <TouchableOpacity
+                  style={styles.secondaryActionButton}
+                  onPress={() => Linking.openURL(selectedMarker.website)}
+                >
+                  <Ionicons name="globe-outline" size={16} color="#0F172A" />
+                  <Text style={styles.secondaryActionText}>Website/Source</Text>
                 </TouchableOpacity>
               ) : null}
 
@@ -2330,7 +2411,7 @@ export default function MapScreen({ navigation, route }) {
                 </TouchableOpacity>
               ) : null}
 
-              {selectedMarker.markerType !== 'community_event' ? (
+              {selectedMarker.markerType !== 'community_event' && selectedMarker.source !== 'austinIndex' ? (
                 <TouchableOpacity
                   style={styles.primaryActionButton}
                   onPress={() => openEventComposer(buildEventDraft(selectedMarker))}
@@ -3193,6 +3274,12 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: 'white',
     marginBottom: 6,
+  },
+  heroTitleCompact: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '700',
+    color: 'white',
   },
   heroText: {
     fontSize: 13,

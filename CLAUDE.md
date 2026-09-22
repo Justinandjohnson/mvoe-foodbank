@@ -302,3 +302,12 @@ if (cached) return JSON.parse(cached);
 const freshData = await this.usdaClient.getNutritionData(fdcId);
 await CacheService.set(cacheKey, JSON.stringify(freshData), 3600); // 1 hour TTL
 ```
+## How work runs on this project (JJ's standing rules)
+
+- **The main Claude only orchestrates.** All work (coding, scraping, verifying) goes to **Sonnet 5 subagents** (`model: sonnet`), run in parallel and in the background, each owning separate files.
+- **Agents never sleep or idle-wait**: no `sleep`, no polling loops, no waiting on slow pages. Grab results and come back fast; drop anything that doesn't answer quickly (hard ceiling 3 min on any one thing) and move on. Run independent fetches in parallel. Geocode in one batch (US Census addressbatch, no key), not Nominatim 1-req/sec.
+- **Goal is that it works, not that things get skipped.** If a site/step is slow, blocked, or fails, get the same result another way right away (alternate URL, sitemap, API/JSON/iCal endpoint, WebFetch vs curl, secondary directory). Only mark skipped after the alternates fail too.
+- **Speed first; index as much as possible.** Scrapers save their output after every source so no progress is lost.
+- **Token budget: up to 1M tokens per agent.** Don't cut agents off below that.
+- Austin food index: scrapers write `frontend/src/data/austin/{pantries,programs,events}.json` (+ `sources-*.json`); `npm --prefix frontend run index:merge` builds `frontend/src/data/austinFoodIndex.json`; `index:refresh` is the weekly source-change check (`CHANGES.md`).
+- Live app is **mvoe.pages.dev (Cloudflare Pages)**, not Vercel. GitHub `main` is older than the live build.

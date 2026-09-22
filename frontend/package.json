@@ -9,7 +9,9 @@
     "dev": "expo start --dev-client",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "reset-project": "node ./scripts/reset-project.js"
+    "reset-project": "node ./scripts/reset-project.js",
+    "index:merge": "node ./scripts/merge-austin-index.mjs",
+    "index:refresh": "node ./scripts/refresh-austin-index.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~4.0.1",

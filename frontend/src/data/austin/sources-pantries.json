@@ -1,0 +1,97 @@
+[
+  {
+    "url": "https://www.centraltexasfoodbank.org/find-food-now",
+    "what": "Central Texas Food Bank's live locator: all ~21 service-area counties' partner agencies, mobile pantries, and programs (CSFP, HOPE, Golden Harvest, BackPack, CACFP) rendered in one page load. Yielded 263 unique Travis/Williamson/Hays sites, 222 of which were successfully geocoded and merged into pantries.json.",
+    "how_to_scrape": "No separate JSON/XHR API exists (checked via browser network inspection) - it is fully server-rendered into the page's <article> element as plain text. Load in a browser (mcp__Claude_Browser__* or claude-in-chrome), get full text via get_page_text/javascript_tool (document.querySelector('article').innerText - page exceeds the 50000-char get_page_text cap, so use javascript_exec .slice() to grab the remainder and reconstruct). Slice by county-name header markers, then regex-parse repeating blocks of the form 'Name\\n\\nProgram: X\\n\\nAddress: Y'. Dedupe same physical site appearing under multiple Program types by stripping ' Partner Agency'/'Mobile Pantry' suffixes and grouping by (name, address). Geocode via one US Census batch addressbatch POST; fall back to individual Nominatim/Census onelineaddress lookups for No_Match rows."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/program-partners",
+    "what": "List of ~100+ Central Texas Food Bank distribution/program partner names by city (no street addresses)",
+    "how_to_scrape": "Fetch page, parse partner name + city list; cross-reference each name against findhelp.org or foodpantries.org for a street address before adding to the dataset."
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-austin",
+    "what": "Aggregator directory listing 54 food pantries in Austin, TX with name and city/zip",
+    "how_to_scrape": "Fetch the city listing page for pantry names/zips, then follow each entry's /li/ detail page for full street address, phone, and hours."
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-round_rock",
+    "what": "Aggregator directory of food pantries in Round Rock, TX",
+    "how_to_scrape": "Same pattern as the Austin listing page; follow /li/ detail links for full addresses."
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-san_marcos",
+    "what": "Aggregator directory of food pantries in San Marcos, TX / Hays County",
+    "how_to_scrape": "Same pattern as the Austin listing page; follow /li/ detail links for full addresses."
+  },
+  {
+    "url": "https://haysfoodbank.org/get-help/",
+    "what": "Hays County Food Bank's Client Choice Market and mobile distribution schedule (Kyle, Buda, Wimberley) with addresses, days, and hours",
+    "how_to_scrape": "Fetch and parse the 'Distribution Sites' section for location name, address, day-of-week, and time window."
+  },
+  {
+    "url": "https://www.rrasc.org/",
+    "what": "Round Rock Area Serving Center food pantry hours, address, and eligibility (voucher/appointment requirement, zip codes served)",
+    "how_to_scrape": "Fetch homepage/contact page; hours and address are in static text."
+  },
+  {
+    "url": "https://www.caringplacetx.org/",
+    "what": "The Caring Place (Georgetown) food pantry address and Fresh Food for Families drive-thru schedule",
+    "how_to_scrape": "Fetch homepage and 'Directions' page; address and hours are static text."
+  },
+  {
+    "url": "https://manosdecristo.org/need-our-help/basic-needs/",
+    "what": "Manos de Cristo food pantry hours, address, and eligibility (curbside, first-come-first-served)",
+    "how_to_scrape": "Fetch and parse static page text."
+  },
+  {
+    "url": "https://elbuen.org/wellness/food-pantry/",
+    "what": "El Buen Samaritano food pantry address, hours, and county coverage",
+    "how_to_scrape": "Fetch and parse static page text."
+  },
+  {
+    "url": "https://www.micah6austin.org/food-pantry",
+    "what": "Micah 6 of Austin food pantry address (at University Presbyterian Church) and hours",
+    "how_to_scrape": "Fetch and parse static page text."
+  },
+  {
+    "url": "https://hopefoodpantryaustin.org/find-food/",
+    "what": "Hope Food Pantry Austin location (Trinity United Methodist Church) and hours",
+    "how_to_scrape": "Fetch and parse static page text."
+  },
+  {
+    "url": "https://st-ignatius.org/food-pantry",
+    "what": "St. Ignatius Martyr Catholic Church food pantry hours and produce distribution day",
+    "how_to_scrape": "Fetch and parse static page text; address is on the church's general contact page."
+  },
+  {
+    "url": "https://austincitylutherans.org/foodpantry/",
+    "what": "Bread For All food pantry location (Faith Presbyterian Church) and weekly hours",
+    "how_to_scrape": "Fetch and parse static page text."
+  },
+  {
+    "url": "https://www.austinvineyardchurch.com/food-pantry",
+    "what": "Austin Vineyard Church drive-thru food pantry address and monthly distribution schedule",
+    "how_to_scrape": "Fetch and parse static page text."
+  },
+  {
+    "url": "https://austinmhc.org/ext_resources/atx-free-fridge-project/",
+    "what": "ATX Free Fridge Project overview listing the 5 community fridge locations in Austin",
+    "how_to_scrape": "Fetch and parse static page text; cross-check against https://www.atxfreefridge.com/ (the project's own site) for the current, authoritative location list since fridges are occasionally added/removed."
+  },
+  {
+    "url": "https://www.atxfreefridge.com/",
+    "what": "ATX Free Fridge Project's own site with current fridge locations and FAQ",
+    "how_to_scrape": "Fetch and parse; prefer this as the primary source over secondary aggregators for fridge locations."
+  },
+  {
+    "url": "https://news.utexas.edu/2026/01/30/ut-outpost-opens-new-location-in-student-services-building/",
+    "what": "UT Outpost (UT Austin student food pantry) new location, eligibility, and services",
+    "how_to_scrape": "Fetch and parse article text; cross-check current hours at https://studentlife.utexas.edu//sos/ut-outpost.php"
+  },
+  {
+    "url": "https://bobcatbounty.txst.edu/about-us/location.html",
+    "what": "Bobcat Bounty, Texas State University's (San Marcos) student-run food pantry location/hours - housed in the Family and Consumer Sciences building, room 187, at 245 West Sessom Drive",
+    "how_to_scrape": "Fetch and parse static page text for hours/eligibility; street address confirmed via https://www.fcs.txst.edu/about/map.html (School of Family and Consumer Sciences building address), geocoded via Census onelineaddress endpoint."
+  }
+]

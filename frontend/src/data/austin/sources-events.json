@@ -1,0 +1,52 @@
+[
+  {
+    "url": "https://www.centraltexasfoodbank.org/find-food-now",
+    "what": "Central Texas Food Bank interactive Find Food Now map/search tool (pantries + mobile distributions, current schedules). Primary live source, but UI is a cross-origin iframe widget and could not be scraped programmatically in this session.",
+    "how_to_scrape": "Needs a real browser with iframe access, or discovery of the underlying data API (likely a PantryNet/AccessFood-style vendor embed) via browser devtools network tab. Search by ZIP/address, filter type=Mobile, read result cards for date/time/address."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/mobilepantry",
+    "what": "Monthly Mobile Pantry Calendar page; links to a downloadable PDF calendar (one per month, e.g. media/1080 = Nov 2025, media/1104 = Dec 2025) covering all 21 counties with day-by-day distribution sites, addresses index, and times.",
+    "how_to_scrape": "Fetch the current month's PDF (find current media ID via site search or the resource-center page), extract text with pymupdf/pdftotext. The PDF has a calendar grid (site+time per day) and a separate address index by county at the end."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/location/travis-county-expo-center-e-austin-mobile-pantry",
+    "what": "CTFB location page for Travis County Expo Center mobile pantry: 1st Thursday, 9:30-10:30 AM, 7311 Decker Ln, Austin TX 78724.",
+    "how_to_scrape": "WebFetch or curl the /location/<slug> page; schedule/address usually in page body text."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/location/nelson-field-mobile-food-pantry",
+    "what": "CTFB location page for Nelson Field drive-thru mobile pantry: 3rd Thursday, 9:00-10:30 AM, 7105 Berkman Dr, Austin TX 78752.",
+    "how_to_scrape": "Same as above - direct /location/<slug> fetch."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/news/food-assistance-resources-williamson-county",
+    "what": "CTFB news page listing Williamson County mobile pantry and fresh-food distribution sites and recurrence patterns (Murphy Park Pavilion 3rd Fri, Holy Temple Church 2nd/4th Thu, St. Margaret Mary Catholic Church 4th Sat, Zion Chapel Fresh Food for Families 3rd Wed). Addresses not given on page - had to be resolved separately via web search. SKIPPED (pass 2): Murphy Park Pavilion address resolved to '1600 Veterans Drive, Taylor, TX 76574' (taylortx.gov, Yelp) but the Census batch geocoder returned No_Match for both '1600 Veterans Drive' and '1600 Veterans Dr' variants - dropped rather than guess coordinates. Holy Temple Church: the only web match found (holytemplechurchtx.com, 4831 Sunnyvale St, Dallas TX) is a different church entirely, not the Williamson County CTFB site - dropped, unresolved.",
+    "how_to_scrape": "WebFetch the page directly; cross-reference site names against county property/church directories or Google to get street addresses, then geocode. For Murphy Park Pavilion, try Williamson CAD parcel lookup or Nominatim/Google Geocoding API (Census batch failed to match the park address) to get real lat/lng. For Holy Temple Church, try Williamson County appraisal district or Facebook/Google Maps search combined with 'Round Rock' or 'Hutto' or 'food pantry' to disambiguate from the Dallas church of the same name."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/mobilepantry (current PDF)",
+    "what": "SKIPPED (pass 2): attempted to find the live Sept/Oct/Nov 2026 Mobile Pantry Calendar PDF. Site is Drupal 8 (confirmed via X-Generator header), so the coordinator-suggested /wp-json/wp/v2/media?search= endpoint does not exist (returns Drupal 404). Brute-forced Drupal media IDs 1288-1408 (step 8) via HEAD/GET on /media/<id>/download, all returned 404 - the Nov2025(1080)/Dec2025(1104) increment pattern does not hold into 2026. Google site-search for '\"September 2026 Mobile Pantry\"' / '\"October 2026 Mobile Pantry\"' returned no matching indexed page.",
+    "how_to_scrape": "Needs a live re-fetch of /mobilepantry or /agencies/resource-center (may surface a currently-linked PDF not yet found by brute force or search-engine indexing), or a Drupal sitemap.xml crawl for /media/*/download links, or the CTFB Facebook page for a posted calendar image."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/agencies/resource-center",
+    "what": "Agency-facing resource center listing current downloadable calendars (regional delivery calendars by month, mobile pantry calendar link, referral lists).",
+    "how_to_scrape": "WebFetch; look for the current month's 'Mobile Pantry Calendar' and 'Regional Delivery Calendar' PDF links, media IDs increment roughly monthly."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/events",
+    "what": "CTFB public events page - mostly fundraising/gala events (Whatanight, Austin Empty Bowl), not food-distribution events for recipients. Checked but out of scope for this slice.",
+    "how_to_scrape": "WebFetch; filter out fundraiser/gala listings, keep only actual public food-distribution events if any appear."
+  },
+  {
+    "url": "https://www.eventbrite.com/d/tx--austin/free--food-and-drink--events/",
+    "what": "Eventbrite Austin free food & drink events listing. Searched but results were dominated by paid festivals (Flavors of West Austin, food-fest events), not food-insecurity distributions.",
+    "how_to_scrape": "Eventbrite has a public search API/JSON endpoints; would need a session-based fetch or their API key to reliably filter for 'food pantry'/'food distribution' category events."
+  },
+  {
+    "url": "https://austin.culturemap.com/news/city-life/snap-benefits-pause-food-banks/",
+    "what": "News article on Austin restaurants/food banks helping during the Nov 2026 SNAP benefits pause; contains some one-off dated giveaways (e.g. Aci restaurant free granita Nov 1) but mostly ongoing offers without exact addresses - not included in events.json due to insufficient address/eligibility clarity.",
+    "how_to_scrape": "WebFetch article text; cross-check each named business for exact address via web search before including as a dated event."
+  }
+]

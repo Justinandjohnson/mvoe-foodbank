@@ -1,0 +1,152 @@
+[
+  {
+    "url": "https://www.austintexas.gov/department/congregate-meal-program",
+    "what": "City of Austin Parks & Recreation congregate senior meal sites (9 rec/senior centers), eligibility, hours",
+    "how_to_scrape": "WebFetch the page; parse the site table (name, address, phone, hours). Static HTML, no JS needed."
+  },
+  {
+    "url": "https://owbc-tx.org/meals-on-wheels/",
+    "what": "Opportunities for Williamson & Burnet Counties senior nutrition / congregate meal program info",
+    "how_to_scrape": "Site returned unrelated gambling content on last fetch (possibly hijacked/parked domain) - re-verify domain is still legitimate before reusing; fall back to roundrocktexas.gov Baca Center page for Round Rock site details."
+  },
+  {
+    "url": "https://www.roundrocktexas.gov/city-departments/parks-and-recreation/facilities/allen-r-baca-center/",
+    "what": "Allen R. Baca Senior Center (Round Rock) congregate lunch details",
+    "how_to_scrape": "WebFetch the page for address/phone/hours."
+  },
+  {
+    "url": "https://www.communityaction.com/sanmarcosseniorcitizenscenter",
+    "what": "San Marcos Senior Citizens Center congregate meals (Hays County)",
+    "how_to_scrape": "WebFetch page for hours/address; cross-check via sanmarcostx.gov resource guide PDF."
+  },
+  {
+    "url": "https://www.hcseniorcenter.org/lunch-menu",
+    "what": "Hill Country Senior Center (Dripping Springs) congregate lunch program, reservation instructions",
+    "how_to_scrape": "WebFetch page; hours/cost listed directly on page."
+  },
+  {
+    "url": "https://caritasofaustin.org/",
+    "what": "Caritas of Austin Community Kitchen (soup kitchen) address, hours, temporary closures",
+    "how_to_scrape": "WebFetch homepage or findhelp.org listing; check for temporary closure notices before publishing hours."
+  },
+  {
+    "url": "https://sunrisenavigationcenter.org/",
+    "what": "Sunrise Homeless Navigation Center food distribution hours/address",
+    "how_to_scrape": "WebFetch homepage and /get-help page for current hours."
+  },
+  {
+    "url": "https://salvationarmyaustin.org/texas-austin/faq/",
+    "what": "Salvation Army Austin Area Command shelter/meal site addresses (Tannehill Ln shelters, Williamson County Service Center)",
+    "how_to_scrape": "WebFetch FAQ page; also check salvationarmyusa.org/tx/austin/ for program pages."
+  },
+  {
+    "url": "https://www.yelp.com/biz/trinity-center-austin-2",
+    "what": "Trinity Center breakfast program hours/address (downtown Austin day center)",
+    "how_to_scrape": "WebFetch Yelp listing or thehelplist.com page; verify against trinity center's own site if available."
+  },
+  {
+    "url": "https://www.wicprograms.org/ci/tx-austin",
+    "what": "List of Texas WIC clinic locations in Austin/Travis County (Northwest, East Austin, South Austin, Blessing Ave, Pflugerville)",
+    "how_to_scrape": "WebFetch or WebSearch; cross-verify individual clinic addresses against office.texaswic.org locator."
+  },
+  {
+    "url": "https://office.texaswic.org/texas/austin",
+    "what": "Official Texas WIC office locator for Austin - authoritative clinic addresses/hours",
+    "how_to_scrape": "Query by zip code path (e.g. /texas/austin/78758/...); page is server-rendered, WebFetch works."
+  },
+  {
+    "url": "https://www.hhs.texas.gov/contact/hhs-locations",
+    "what": "Texas HHSC benefits office locations (SNAP/WIC/TANF enrollment)",
+    "how_to_scrape": "WebFetch; also cross-check snapoffices.com for specific SNAP-only office addresses."
+  },
+  {
+    "url": "https://www.snapoffices.com/ci/tx-austin",
+    "what": "List of Austin-area SNAP food stamp offices with addresses",
+    "how_to_scrape": "WebFetch listing page."
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/",
+    "what": "Central Texas Food Bank main office + SNAP/WIC application help line",
+    "how_to_scrape": "WebFetch homepage; help line number and office hours listed in footer/contact section."
+  },
+  {
+    "url": "https://www.mealsonwheelscentraltexas.org/",
+    "what": "Meals on Wheels Central Texas home-delivered meal program (main office, eligibility)",
+    "how_to_scrape": "WebFetch homepage; office address/phone in footer."
+  },
+  {
+    "url": "https://mlf.org/",
+    "what": "Mobile Loaves & Fishes truck feeding program for homeless/working poor; nightly route map at tracker.mlf.org",
+    "how_to_scrape": "WebFetch homepage for program description; the nightly truck route map (tracker.mlf.org/datasource/maps/map/1) is a dynamic/interactive map - would need browser automation or their API to pull daily site coordinates, not scraped this run."
+  },
+  {
+    "url": "https://www.austinisd.org/nutrition-food-services/meal-programs/summer",
+    "what": "Austin ISD free summer meal sites (30+ schools) - eligibility page",
+    "how_to_scrape": "Page itself has no addresses; links to an interactive Looker Studio dashboard (lookerstudio.google.com) and squaremeals.org site locator map, both JS-rendered - need browser automation (e.g. Claude Browser tools) or the underlying data API to extract individual school addresses/hours. NOT scraped this run - see dropped entries in report."
+  },
+  {
+    "url": "https://squaremeals.org/Programs/Summer-Meal-Programs/Summer-Meal-Site-Map",
+    "what": "Texas Dept of Agriculture statewide summer meal site locator (covers AISD, Round Rock ISD, Hays CISD, Leander ISD, etc.)",
+    "how_to_scrape": "Interactive map/API-backed; requires browser automation or reverse-engineering their site-search API to pull individual site addresses. NOT scraped this run."
+  },
+  {
+    "url": "https://summerfeeding.squaremeals.org/",
+    "what": "TX Dept of Agriculture Summer Meal site locator (JS app); POST API returns site list for active summer program dates",
+    "how_to_scrape": "POST JSON to https://summerfeeding.squaremeals.org/api/SummerFeeding/ with body like {City,State,Zip,Radius,Latitude,Longitude}. Empty array returned outside the active summer program window (tested 2026-09-22, off-season, returned []); re-run May-August for live AISD/RRISD/Leander/Pflugerville/Manor/Del Valle/Hays/Georgetown/Eanes/Lake Travis summer sites."
+  },
+  {
+    "url": "https://datastudio.google.com/reporting/46c82c95-bfd4-4144-a849-70e7ae3aeac4/page/7EUn",
+    "what": "Austin ISD Summer Meal Sites dashboard (Google Data Studio/Looker Studio)",
+    "how_to_scrape": "Looker Studio reports do not expose a stable public JSON API; re-check via browser network tab for a /reportsGetPage or bigquery-backed embed request during active summer session; otherwise WebFetch the AISD summer meals page https://www.austinisd.org/nutrition-food-services/meal-programs/summer for a static site list."
+  },
+  {
+    "url": "https://www.austingurdwarasahib.com/",
+    "what": "Austin Gurdwara Sahib address/phone, langar (free community meal) info",
+    "how_to_scrape": "WebFetch homepage and /langar page for current schedule."
+  },
+  {
+    "url": "https://www.findhelp.org/provider/street-youth-ministry-of-austin--austin-tx/5699147322097664?postal=78701",
+    "what": "Street Youth Ministry of Austin address/phone/services",
+    "how_to_scrape": "WebFetch findhelp.org provider page; cross-check streetyouthministry.org for current address (multiple addresses seen in different sources)."
+  },
+  {
+    "url": "https://frontsteps.org/",
+    "what": "Front Steps homeless services main office address/phone",
+    "how_to_scrape": "WebFetch homepage/contact page."
+  },
+  {
+    "url": "https://www.micah6austin.org/",
+    "what": "Micah 6 of Austin (University Presbyterian Church) drop-in/pantry hours",
+    "how_to_scrape": "WebFetch homepage for current hours; cross-check foodpantries.org listing."
+  },
+  {
+    "url": "https://www.hayscisd.net/childnutrition",
+    "what": "Hays CISD Child Nutrition Services, CEP no-cost meal campuses list",
+    "how_to_scrape": "WebFetch page; CEP campus list may change yearly, re-verify each school year."
+  },
+  {
+    "url": "https://foodservices.roundrockisd.org/free-reduced-meals/",
+    "what": "Round Rock ISD Food & Nutrition Services free/reduced meal info and dept address",
+    "how_to_scrape": "WebFetch page; dept address also on roundrockisd.org contact-us-food-service page."
+  },
+  {
+    "url": "https://www.pfisd.net/",
+    "what": "Pflugerville ISD district office address (nutrition services info)",
+    "how_to_scrape": "WebFetch site; find Food & Nutrition Services subpage for dept-specific contact/address if different from district HQ."
+  },
+  {
+    "url": "https://www.wcchd.org/healthy_people/wilco_wic.php",
+    "what": "Williamson County and Cities Health District WIC clinic locations (Georgetown, Round Rock, Liberty Hill, Taylor, Cedar Park, Bartlett)",
+    "how_to_scrape": "WebFetch page for current clinic list/addresses; also see wcchd.org/about/locations.php for full WCCHD office list."
+  },
+  {
+    "url": "https://www.findhelp.org/texas-health-and-human-services-commission-(hhsc)--seguin-tx/6382903143563264?postal=78666",
+    "what": "Texas HHSC benefits office (SNAP/TANF/Medicaid) serving Hays County, San Marcos",
+    "how_to_scrape": "WebFetch findhelp.org page; cross-check hhs.texas.gov office locator."
+  },
+  {
+    "url": "https://geocoding.geo.census.gov/geocoder/locations/addressbatch",
+    "what": "US Census Bureau batch geocoder used to resolve lat/lng for all new program addresses in one call",
+    "how_to_scrape": "POST multipart form with addressFile=<CSV of id,street,city,state,zip> and benchmark=Public_AR_Current. No API key needed. One no-match this run (1200 W 17th St, Georgetown, TX 78626) — needs a corrected address before it will resolve."
+  }
+]

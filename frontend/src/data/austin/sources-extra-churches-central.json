@@ -1,0 +1,62 @@
+[
+  {
+    "url": "https://www.foodpantries.org/ci/tx-austin",
+    "what": "Directory of Austin food pantries incl. church-run ones (Our Lady's Maronite, Kingdom of God Christian Center, Welcome Table, Bethany Faith)",
+    "how_to_scrape": "WebSearch/WebFetch listing page; entries include address, hours, phone per pantry"
+  },
+  {
+    "url": "http://www.bccdisciplesofchrist.com/bethany_faith_food_pantry",
+    "what": "Bethany Christian Church (Disciples of Christ) - Bethany Faith Food Pantry page",
+    "how_to_scrape": "WebFetch page for hours/address/phone"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/media/823/download",
+    "what": "Central Texas Food Bank Emergency Food Assistance Referral List (PDF), partner church sites incl. Dolores Catholic Church, Good Shepherd on the Hill, Bannockburn Baptist, Christian Life Church",
+    "how_to_scrape": "Download PDF, extract text (binary/PDF - use a PDF text extractor, WebFetch returned corrupted text)"
+  },
+  {
+    "url": "https://www.southaustinchurch.org/food-pantry",
+    "what": "South Austin Church (of the Nazarene) food pantry page",
+    "how_to_scrape": "WebFetch for address/hours/access instructions"
+  },
+  {
+    "url": "https://petitepantry.org/",
+    "what": "Petite Pantry network - small free pantry boxes incl. Central Christian Church downtown",
+    "how_to_scrape": "WebFetch/WebSearch for locations list"
+  },
+  {
+    "url": "https://www.austinbaptistchapel.com/contact.html",
+    "what": "Austin Baptist Chapel - Angel House Soup Kitchen contact/address page",
+    "how_to_scrape": "WebFetch for address; hours require direct contact (not published)"
+  },
+  {
+    "url": "https://findfoodpantry.org/texas/austin/cristo-rey-catholic-church-78702",
+    "what": "Cristo Rey Catholic Church food pantry listing",
+    "how_to_scrape": "WebSearch/WebFetch listing page for hours/address/phone"
+  },
+  {
+    "url": "https://www.findhelp.org/provider/holy-cross-catholic-church---society-of-st.-vincent-de-paul--austin-tx/5991708341567488?postal=78701",
+    "what": "Holy Cross Catholic Church SVdP conference - Basic Needs Assistance (incl. food) listing",
+    "how_to_scrape": "findhelp.org provider page; may require search by postal code, blocked to automated scraping at scale"
+  },
+  {
+    "url": "https://www.findhelp.org/our-lady-of-guadalupe-catholic-church--austin-tx--food-pantry/5890161861459968",
+    "what": "Our Lady of Guadalupe Catholic Church food pantry listing (hours, eligibility)",
+    "how_to_scrape": "findhelp.org program page"
+  },
+  {
+    "url": "https://uumc.church/food-movers/",
+    "what": "University United Methodist Church food distribution program page",
+    "how_to_scrape": "WebFetch for hours/schedule"
+  },
+  {
+    "url": "https://austindiocese.org/parishfinder",
+    "what": "Diocese of Austin parish finder - full list of Catholic parishes by zip/area, used to identify additional candidate churches",
+    "how_to_scrape": "Interactive search tool; query by zip code or map area, follow each parish link"
+  },
+  {
+    "url": "https://austinsvdp.info/",
+    "what": "St. Vincent de Paul Diocesan Council of Austin conference locator (41 conferences across Central Texas)",
+    "how_to_scrape": "Interactive locator - enter address to find nearest conference; does not expose a static full list"
+  }
+]

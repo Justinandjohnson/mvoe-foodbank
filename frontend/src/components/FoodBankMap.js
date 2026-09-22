@@ -1,31 +1,96 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
+import austinFoodIndex from '../data/austinFoodIndex.json';
+
+// Help-heatmap weighting per Austin index entry type. Events only count if within 14 days.
+const HEAT_WEIGHTS = {
+  food_bank: 3, pantry: 2, meal: 2, community_fridge: 1.5, program: 1, event: 2,
+};
+const HEAT_POINTS = (() => {
+  const now = Date.now();
+  const twoWeeks = now + 14 * 24 * 60 * 60 * 1000;
+  return (austinFoodIndex.entries || [])
+    .filter((e) => Number.isFinite(Number(e.lat)) && Number.isFinite(Number(e.lng)))
+    .filter((e) => {
+      if (e.type !== 'event') return true;
+      const t = new Date(e.event_date).getTime();
+      return Number.isFinite(t) && t >= now && t <= twoWeeks;
+    })
+    .map((e) => [Number(e.lat), Number(e.lng), HEAT_WEIGHTS[e.type] || 1]);
+})();
 
 /**
- * MARKER COLOR SCHEME - CONSISTENT ACROSS ALL MAP MARKERS
+ * PIN TYPE SCHEME - CONSISTENT ACROSS ALL MAP MARKERS
  *
- * Food Banks:  #22C55E (Green)   - Circle shape
- * Beacons:     #F97316 (Orange)  - Diamond shape (rotated square)
- * Meals:       #8B5CF6 (Purple)  - Square shape
+ * food_bank:         #22C55E (Green)   glyph "B"
+ * pantry:            #0EA5E9 (Blue)    glyph "P"
+ * community_fridge:  #06B6D4 (Cyan)    glyph "F"
+ * meal:              #8B5CF6 (Purple)  glyph "M"
+ * program:           #F59E0B (Amber)   glyph "G"
+ * event:             #F97316 (Orange)  glyph "E"
  *
- * Each marker type has ONE color only - no variations based on status.
+ * Legacy markerType values (food_bank / food_beacon / community_event, produced by the
+ * live backend feed) are mapped onto this same 6-type palette so every pin on the map -
+ * live feed or the Austin index - looks and reads consistently.
  */
-function getMarkerColor(marker) {
-  if (marker.markerType === 'food_beacon') {
-    return '#F97316'; // Orange for all beacons
-  }
+const TYPE_META = {
+  food_bank: { label: 'Food Bank', c1: '#22C55E', c2: '#15803D', glyph: 'B' },
+  pantry: { label: 'Pantry', c1: '#0EA5E9', c2: '#0369A1', glyph: 'P' },
+  community_fridge: { label: 'Community Fridge', c1: '#06B6D4', c2: '#0E7490', glyph: 'F' },
+  meal: { label: 'Meal', c1: '#8B5CF6', c2: '#6D28D9', glyph: 'M' },
+  program: { label: 'Program', c1: '#F59E0B', c2: '#B45309', glyph: 'G' },
+  event: { label: 'Event', c1: '#F97316', c2: '#C2410C', glyph: 'E' },
+};
 
-  if (marker.markerType === 'community_event') {
-    return '#8B5CF6'; // Purple for all events/meals
+function resolveDisplayType(marker) {
+  if (marker.displayType && TYPE_META[marker.displayType]) return marker.displayType;
+  if (marker.markerType === 'food_beacon') return 'pantry';
+  if (marker.markerType === 'community_event') return 'event';
+  if (marker.markerType === 'food_bank') return 'food_bank';
+  if (typeof marker.markerType === 'string' && marker.markerType.indexOf('austin_') === 0) {
+    const raw = marker.markerType.slice('austin_'.length);
+    return TYPE_META[raw] ? raw : 'program';
   }
-
-  return '#22C55E'; // Green for all food banks
+  return 'food_bank';
 }
 
-function getMarkerClass(marker) {
-  if (marker.markerType === 'food_beacon') return 'mshape-beacon';
-  if (marker.markerType === 'community_event') return 'mshape-event';
-  return 'mshape-bank';
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatWhen(marker) {
+  const raw = marker.event_date || marker.startTime;
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return String(raw);
+  return date.toLocaleString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+function buildPinSvg(displayType, isLive) {
+  const meta = TYPE_META[displayType] || TYPE_META.food_bank;
+  const gradId = 'g-' + displayType;
+  return (
+    '<svg width="44" height="54" viewBox="0 0 44 54" xmlns="http://www.w3.org/2000/svg">'
+    + '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0%" stop-color="' + meta.c1 + '"/>'
+    + '<stop offset="100%" stop-color="' + meta.c2 + '"/>'
+    + '</linearGradient></defs>'
+    + '<path d="M22 2C10.4 2 2 10.8 2 21.6c0 14.6 20 30.4 20 30.4s20-15.8 20-30.4C42 10.8 33.6 2 22 2z" '
+    + 'fill="url(#' + gradId + ')" stroke="rgba(255,255,255,0.95)" stroke-width="2"/>'
+    + '<circle cx="22" cy="21" r="12" fill="rgba(255,255,255,0.22)"/>'
+    + '<circle cx="22" cy="21" r="12" fill="none" stroke="rgba(255,255,255,0.65)" stroke-width="1.5"/>'
+    + '<text x="22" y="26.5" font-size="15" font-weight="800" fill="white" text-anchor="middle" '
+    + 'font-family="Arial, Helvetica, sans-serif">' + meta.glyph + '</text>'
+    + (isLive ? '<circle cx="34" cy="10" r="5" fill="#FACC15" stroke="white" stroke-width="1.5"/>' : '')
+    + '</svg>'
+  );
 }
 
 function serializeMarkers(markers) {
@@ -35,14 +100,38 @@ function serializeMarkers(markers) {
         && Number.isFinite(Number(marker.lng))
         && marker.id
     )
-    .map((marker) => ({
-      ...marker,
-      lat: Number(marker.lat),
-      lng: Number(marker.lng),
-      color: getMarkerColor(marker),
-      shapeClass: getMarkerClass(marker),
-      liveClass: marker.markerType === 'food_beacon' && marker.isActive ? ' mbeacon-live' : '',
-    }));
+    .map((marker) => {
+      const displayType = resolveDisplayType(marker);
+      const meta = TYPE_META[displayType] || TYPE_META.food_bank;
+      const isLive = marker.markerType === 'food_beacon' && !!marker.isActive;
+      const address = marker.address
+        || [marker.city, marker.state].filter(Boolean).join(', ')
+        || marker.locationLabel
+        || '';
+      const hours = marker.hours || marker.todaysHours || '';
+      const when = formatWhen(marker);
+      const website = marker.website || marker.source_url || '';
+
+      return {
+        ...marker,
+        lat: Number(marker.lat),
+        lng: Number(marker.lng),
+        displayType,
+        typeLabel: meta.label,
+        pinSvg: buildPinSvg(displayType, isLive),
+        liveClass: isLive ? ' mbeacon-live' : '',
+        popup: {
+          name: marker.name || 'Untitled location',
+          typeLabel: meta.label,
+          hours,
+          when,
+          eligibility: marker.eligibility || '',
+          address,
+          phone: marker.phone || '',
+          website,
+        },
+      };
+    });
 }
 
 function buildMapHtml() {
@@ -52,54 +141,82 @@ function buildMapHtml() {
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
   <style>
     *{margin:0;padding:0;box-sizing:border-box;}
-    html,body,#map{width:100%;height:100vh;background:#07121f;}
-    .leaflet-container{background:#07121f;}
-    .leaflet-control-attribution{display:none;}
+    html,body,#map{width:100%;height:100vh;background:#e5e3df;}
+    .leaflet-container{background:#e5e3df;}
+    .leaflet-control-attribution{
+      font-size:9px!important;
+      background:rgba(255,255,255,0.75)!important;
+      color:#333!important;
+    }
     .leaflet-control-zoom a{
-      background:rgba(255,255,255,0.14)!important;
-      backdrop-filter:blur(8px);
-      color:white!important;
-      border:1px solid rgba(255,255,255,0.2)!important;
+      background:rgba(255,255,255,0.92)!important;
+      color:#111!important;
+      border:1px solid rgba(0,0,0,0.15)!important;
       font-size:16px;
     }
-    .leaflet-control-zoom a:hover{background:rgba(255,255,255,0.26)!important;}
-    .custom-marker{display:flex;align-items:center;justify-content:center;cursor:pointer;}
-    .mcore{
-      width:18px;
-      height:18px;
-      border:2px solid rgba(255,255,255,0.92);
-      box-shadow:0 0 0 4px rgba(255,255,255,0.12),0 6px 18px rgba(0,0,0,0.42);
-      transition:transform 0.15s ease, box-shadow 0.15s ease;
+    .leaflet-control-zoom a:hover{background:#fff!important;}
+    .custom-marker{cursor:pointer;}
+    .mcore-wrap{
+      display:flex;align-items:flex-end;justify-content:center;
+      width:44px;height:54px;
+      filter:drop-shadow(0 6px 10px rgba(0,0,0,0.45));
+      transition:transform 0.12s ease;
+      transform-origin:50% 100%;
     }
-    .mshape-bank{border-radius:50%;}
-    .mshape-beacon{border-radius:5px;transform:rotate(45deg);}
-    .mshape-event{border-radius:4px;}
-    .mbeacon-live{animation:beaconPulse 1.7s ease-in-out infinite;}
-    .mshape-selected{
-      transform:scale(1.18)!important;
-      box-shadow:0 0 0 7px rgba(255,255,255,0.16),0 8px 22px rgba(0,0,0,0.56)!important;
-    }
-    .mshape-beacon.mshape-selected{transform:rotate(45deg) scale(1.16)!important;}
-    .mlocation{
-      width:12px;
-      height:12px;
-      border-radius:50%;
-      background:#38BDF8;
-      border:2px solid white;
-      box-shadow:0 0 0 6px rgba(56,189,248,0.16),0 2px 8px rgba(0,0,0,0.4);
-    }
+    .mcore-wrap svg{width:44px;height:54px;display:block;}
+    .mbeacon-live{animation:beaconPulse 1.6s ease-in-out infinite;}
+    .mshape-selected{transform:scale(1.22)!important;}
     @keyframes beaconPulse{
-      0%,100%{
-        filter:saturate(1) brightness(1);
-        box-shadow:0 0 0 4px rgba(249,115,22,0.14),0 6px 18px rgba(0,0,0,0.42);
-      }
-      50%{
-        filter:saturate(1.24) brightness(1.15);
-        box-shadow:0 0 0 8px rgba(249,115,22,0.20),0 0 18px rgba(249,115,22,0.45),0 6px 18px rgba(0,0,0,0.42);
-      }
+      0%,100%{filter:drop-shadow(0 6px 10px rgba(0,0,0,0.45));}
+      50%{filter:drop-shadow(0 0 14px rgba(250,204,21,0.75)) drop-shadow(0 6px 10px rgba(0,0,0,0.45));}
     }
+    .mlocation-wrap{width:22px;height:22px;display:flex;align-items:center;justify-content:center;}
+    .mlocation-pulse{
+      position:absolute;width:22px;height:22px;border-radius:50%;
+      background:rgba(56,189,248,0.35);animation:locPulse 1.8s ease-out infinite;
+    }
+    .mlocation{
+      width:14px;height:14px;border-radius:50%;background:#2563EB;
+      border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.45);
+      position:relative;z-index:1;
+    }
+    @keyframes locPulse{
+      0%{transform:scale(0.6);opacity:0.9;}
+      100%{transform:scale(2.4);opacity:0;}
+    }
+    .leaflet-popup-content-wrapper{border-radius:12px;}
+    .mpopup{font-family:-apple-system,Segoe UI,Arial,sans-serif;min-width:200px;max-width:260px;}
+    .mpopup h3{font-size:14px;margin:0 0 2px;color:#0F172A;}
+    .mpopup .mtype{
+      display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;
+      letter-spacing:0.04em;color:#334155;background:#E2E8F0;border-radius:999px;
+      padding:2px 8px;margin-bottom:6px;
+    }
+    .mpopup .mline{font-size:12px;color:#334155;margin:3px 0;line-height:1.35;}
+    .mpopup .mline b{color:#0F172A;}
+    .mpopup .mbtnrow{display:flex;gap:6px;margin-top:8px;}
+    .mpopup .mbtn{
+      flex:1;text-align:center;font-size:12px;font-weight:700;color:white;
+      background:#0F172A;border-radius:8px;padding:8px 6px;text-decoration:none;
+      display:block;min-height:32px;line-height:16px;
+    }
+    .mpopup .mbtn.secondary{background:#334155;}
+    .locate-btn{
+      background:white;width:44px;height:44px;border-radius:8px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;
+      justify-content:center;cursor:pointer;font-size:20px;
+    }
+    .locate-btn:hover{background:#f1f5f9;}
+    .heat-btn{
+      background:white;width:44px;height:44px;border-radius:8px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;
+      justify-content:center;cursor:pointer;font-size:19px;margin-bottom:6px;
+    }
+    .heat-btn.on{background:#F97316;}
+    .heat-btn:hover{opacity:0.9;}
   </style>
 </head>
 <body>
@@ -110,23 +227,65 @@ function buildMapHtml() {
     var selectedId = null;
     var userMarker = null;
     var viewportInitialized = false;
+    var autoLocated = false;
     var map = L.map("map", {
       zoomControl: true,
-      attributionControl: false,
+      attributionControl: true,
       touchZoom: true,
       scrollWheelZoom: true,
       doubleClickZoom: true,
-      dragging: true
+      dragging: true,
+      preferCanvas: true,
+      zoomAnimation: true,
+      markerZoomAnimation: true
     });
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+    // Esri World Street Map - free, no API key required, styled like a mainstream street map
+    // (roads, labels, POIs) with required attribution below.
+    L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 19,
+        attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, (c) OpenStreetMap contributors, and the GIS User Community"
+      }
+    ).addTo(map);
+
+    function escapeHtml(value) {
+      var div = document.createElement("div");
+      div.textContent = value == null ? "" : String(value);
+      return div.innerHTML;
+    }
+
+    function buildPopupHtml(marker) {
+      var p = marker.popup || {};
+      var when = p.hours || p.when || "";
+      var rows = "";
+      if (when) rows += '<div class="mline"><b>When/Hours:</b> ' + escapeHtml(when) + "</div>";
+      if (p.eligibility) rows += '<div class="mline"><b>Eligibility:</b> ' + escapeHtml(p.eligibility) + "</div>";
+      if (p.address) rows += '<div class="mline">' + escapeHtml(p.address) + "</div>";
+      if (p.phone) rows += '<div class="mline">' + escapeHtml(p.phone) + "</div>";
+
+      var dirUrl = "https://www.google.com/maps/dir/?api=1&destination=" + marker.lat + "," + marker.lng;
+      var buttons = '<a class="mbtn" target="_blank" rel="noopener" href="' + dirUrl + '">Directions</a>';
+      if (p.website) {
+        buttons += '<a class="mbtn secondary" target="_blank" rel="noopener" href="' + escapeHtml(p.website) + '">Website</a>';
+      }
+
+      return '<div class="mpopup">'
+        + '<span class="mtype">' + escapeHtml(p.typeLabel || "") + "</span>"
+        + "<h3>" + escapeHtml(p.name || "") + "</h3>"
+        + rows
+        + '<div class="mbtnrow">' + buttons + "</div>"
+        + "</div>";
+    }
 
     function makeIcon(marker, isSelected) {
       return L.divIcon({
         className: "custom-marker",
-        html: '<div class="mcore ' + marker.shapeClass + marker.liveClass + (isSelected ? " mshape-selected" : "") + '" style="background:' + marker.color + '"></div>',
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
+        html: '<div class="mcore-wrap' + marker.liveClass + (isSelected ? " mshape-selected" : "") + '">' + marker.pinSvg + "</div>",
+        iconSize: [44, 54],
+        iconAnchor: [22, 52],
+        popupAnchor: [0, -46]
       });
     }
 
@@ -164,10 +323,15 @@ function buildMapHtml() {
         existing.marker = marker;
         existing.instance.setLatLng([marker.lat, marker.lng]);
         existing.instance.setIcon(makeIcon(marker, markerId === selectedId));
+        existing.instance.setPopupContent(buildPopupHtml(marker));
         return;
       }
 
-      var instance = L.marker([marker.lat, marker.lng], { icon: makeIcon(marker, markerId === selectedId) }).addTo(map);
+      var instance = L.marker([marker.lat, marker.lng], {
+        icon: makeIcon(marker, markerId === selectedId),
+        riseOnHover: true
+      }).addTo(map);
+      instance.bindPopup(buildPopupHtml(marker));
       instance.on("click", function () {
         window.parent.postMessage({ type: "marker_select", marker: markerPayloadById[markerId] || marker }, "*");
       });
@@ -218,10 +382,11 @@ function buildMapHtml() {
         userMarker = L.marker(latLng, {
           icon: L.divIcon({
             className: "custom-marker",
-            html: '<div class="mlocation"></div>',
-            iconSize: [18, 18],
-            iconAnchor: [9, 9]
-          })
+            html: '<div class="mlocation-wrap"><div class="mlocation-pulse"></div><div class="mlocation"></div></div>',
+            iconSize: [22, 22],
+            iconAnchor: [11, 11]
+          }),
+          zIndexOffset: 1000
         }).addTo(map);
         return;
       }
@@ -258,11 +423,21 @@ function buildMapHtml() {
         });
       } else {
         setProgrammaticView(function () {
-          map.setView([30.2672, -97.7431], 11);
+          map.setView([30.2672, -97.7431], 13);
         });
       }
 
       viewportInitialized = true;
+    }
+
+    // As soon as we learn the user's real location (browser geolocation resolved),
+    // recenter on it at ~zoom 13 exactly once, even if an Austin fallback view already ran.
+    function autoCenterOnUser(latLng, zoom) {
+      if (autoLocated) return;
+      autoLocated = true;
+      setProgrammaticView(function () {
+        map.setView(latLng, zoom || 13);
+      });
     }
 
     function applyData(data) {
@@ -279,6 +454,7 @@ function buildMapHtml() {
       syncSelection(key);
       var nextZoom = Math.max(map.getZoom() || 0, 15);
       map.flyTo(entry.instance.getLatLng(), nextZoom, { animate: true, duration: 0.65 });
+      entry.instance.openPopup();
     }
 
     function focusUser(zoom) {
@@ -288,11 +464,63 @@ function buildMapHtml() {
       }
     }
 
+    // In-map locate-me control (in addition to any host-app locate button).
+    var LocateControl = L.Control.extend({
+      options: { position: "bottomright" },
+      onAdd: function () {
+        var div = L.DomUtil.create("div", "locate-btn");
+        div.innerHTML = "\\u25CE";
+        div.title = "Find my location";
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.on(div, "click", function () {
+          window.parent.postMessage({ type: "locate_request" }, "*");
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function (pos) {
+              var latLng = [pos.coords.latitude, pos.coords.longitude];
+              syncUserLocation({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+              map.flyTo(latLng, Math.max(map.getZoom() || 0, 13), { animate: true, duration: 0.65 });
+            });
+          }
+        });
+        return div;
+      }
+    });
+    map.addControl(new LocateControl());
+
+    // Help heatmap: shows where food help is concentrated (weighted Austin index points).
+    var heatLayer = L.heatLayer([], {
+      radius: 28, blur: 20, maxZoom: 17, max: 3, minOpacity: 0.35,
+      gradient: { 0.2: "#FDE68A", 0.4: "#FBBF24", 0.6: "#F97316", 0.8: "#EA580C", 1.0: "#B91C1C" }
+    });
+    var heatOn = false;
+    var HeatControl = L.Control.extend({
+      options: { position: "bottomright" },
+      onAdd: function () {
+        var div = L.DomUtil.create("div", "heat-btn");
+        div.innerHTML = "\\uD83D\\uDD25";
+        div.title = "Toggle help heatmap";
+        L.DomEvent.disableClickPropagation(div);
+        L.DomEvent.on(div, "click", function () {
+          heatOn = !heatOn;
+          div.classList.toggle("on", heatOn);
+          if (heatOn) heatLayer.addTo(map);
+          else map.removeLayer(heatLayer);
+        });
+        return div;
+      }
+    });
+    map.addControl(new HeatControl());
+
     window.addEventListener("message", function (event) {
       if (!event.data || !event.data.type) return;
 
       if (event.data.type === "set_data") {
         applyData(event.data);
+        if (Array.isArray(event.data.heatPoints)) heatLayer.setLatLngs(event.data.heatPoints);
+        var ul = event.data.userLocation;
+        if (ul && typeof ul.latitude === "number" && typeof ul.longitude === "number") {
+          autoCenterOnUser([ul.latitude, ul.longitude], 13);
+        }
       } else if (event.data.type === "select") {
         syncSelection(event.data.id);
       } else if (event.data.type === "focus_marker") {
@@ -340,6 +568,7 @@ export default function FoodBankMap({ markers = [], selectedId, focusRequest, on
           type: 'set_data',
           markers: serializedMarkers,
           userLocation: safeUserLocation,
+          heatPoints: HEAT_POINTS,
         },
         '*'
       );
@@ -393,6 +622,7 @@ export default function FoodBankMap({ markers = [], selectedId, focusRequest, on
               type: 'set_data',
               markers: serializedMarkers,
               userLocation: safeUserLocation,
+              heatPoints: HEAT_POINTS,
             },
             '*'
           );
@@ -418,7 +648,7 @@ export default function FoodBankMap({ markers = [], selectedId, focusRequest, on
         onLoad={() => setIframeLoadTick((current) => current + 1)}
         style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
         title="Live Food Map"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts allow-same-origin allow-popups"
       />
     </View>
   );

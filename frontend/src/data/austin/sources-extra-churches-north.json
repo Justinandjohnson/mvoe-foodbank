@@ -1,0 +1,272 @@
+[
+  {
+    "url": "https://austindiocese.org/parishfinder",
+    "what": "Diocese of Austin parish finder - lookup parishes by city/zip",
+    "how_to_scrape": "Interactive finder tool; use WebFetch with a prompt asking to list parishes for a given city, or search 'austindiocese.org parish [city]' via WebSearch since the tool itself may require JS."
+  },
+  {
+    "url": "https://svdprr.com/",
+    "what": "Society of St Vincent de Paul St. William Conference (Round Rock) food pantry page",
+    "how_to_scrape": "WebFetch works directly; has address/phone/hours/eligibility."
+  },
+  {
+    "url": "https://st-william.org/news/svdp-food-pantry",
+    "what": "St. William Catholic Church SVdP food pantry news post",
+    "how_to_scrape": "WebFetch returns 403 Forbidden; try WebSearch snippet instead or Google cache."
+  },
+  {
+    "url": "https://sainthelens.org/the-society-of-st-vincent-de-paul",
+    "what": "St. Helen Catholic Church (Georgetown) SVdP page",
+    "how_to_scrape": "WebFetch works; gives meeting schedule and pantry location (John Dolan Building)."
+  },
+  {
+    "url": "https://svdpgeorgetown.org/about-us",
+    "what": "SVdP Georgetown conference about page",
+    "how_to_scrape": "WebFetch works but page lacks address/phone/hours; check other pages on svdpgeorgetown.org (e.g. /contact) for more detail."
+  },
+  {
+    "url": "https://www.stpatrickhutto.org/outreach-ministries",
+    "what": "St. Patrick Catholic Church (Hutto) outreach ministries incl. SVdP and Baby Boutique",
+    "how_to_scrape": "WebFetch works directly."
+  },
+  {
+    "url": "https://stelizabethpf.org/social-outreach",
+    "what": "St. Elizabeth of Hungary Catholic Church (Pflugerville) social outreach/food pantry page",
+    "how_to_scrape": "Use findhelp.org listing (WebSearch surfaced detailed hours/phone) since direct WebFetch of stelizabethpf.org page was not yet tried - try WebFetch next, findhelp.org URL is a good secondary source."
+  },
+  {
+    "url": "https://www.findhelp.org/st.-elizabeth-catholic-church-society-of-st.-vincent-de-paul--pflugerville-tx--food-pantry/5650102369386496?postal=78660",
+    "what": "findhelp.org listing for St. Elizabeth Pflugerville SVdP food pantry with hours/phone/service area",
+    "how_to_scrape": "WebSearch snippet was sufficient; WebFetch may require JS rendering (findhelp.org is often JS-heavy) - use WebSearch summarization instead."
+  },
+  {
+    "url": "https://www.findhelp.org/st.-margaret-mary-catholic-church--cedar-park-tx--st.-vincent-de-paul-society---basic-needs-assistance/6409146095894528?postal=78613",
+    "what": "findhelp.org listing for St. Margaret Mary Cedar Park SVdP",
+    "how_to_scrape": "WebSearch snippet worked; consider WebFetch of parish's own site (stmargaretmary-cp.org, unverified domain) for full address."
+  },
+  {
+    "url": "https://smtaylor.org/svdp",
+    "what": "St. Mary of the Assumption (Taylor) SVdP page",
+    "how_to_scrape": "WebFetch returned 403 Forbidden; try WebSearch site: query or Wayback Machine (web.archive.org/web/2026/https://smtaylor.org/svdp)."
+  },
+  {
+    "url": "https://www.foodpantries.org/li/st._elizabet-Pfluge/",
+    "what": "foodpantries.org listing for St Elizabeth Pflugerville SVdP",
+    "how_to_scrape": "Secondary source, not yet fetched directly; WebFetch should work (static-ish site)."
+  },
+  {
+    "url": "https://www.wcchd.org/news_detail_T4_R316.php",
+    "what": "Williamson County & Cities Health District list of food pantries in Williamson County",
+    "how_to_scrape": "Not yet fetched - WebFetch likely works, could reveal additional Catholic pantries not yet found (Taylor, Liberty Hill, Jarrell area)."
+  },
+  {
+    "url": "https://austinsvdp.info/",
+    "what": "SVdP Austin diocesan council conference locator - enter address to find serving conference",
+    "how_to_scrape": "Likely an interactive address-lookup tool (JS); not useful for bulk scraping but good for verifying individual addresses."
+  },
+  {
+    "url": "https://www.findhelp.org/hyde-park-baptist--austin-tx--food-pantry/5751181408993280",
+    "what": "Hyde Park Baptist Church food pantry hours/eligibility",
+    "how_to_scrape": "WebFetch works; plain HTML listing page"
+  },
+  {
+    "url": "https://www.andersonbaptistchurch.org/pantry",
+    "what": "Anderson Mill Baptist Church pantry page",
+    "how_to_scrape": "WebSearch snippet used; direct WebFetch not attempted, page is simple HTML"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-cedar_park",
+    "what": "Directory of Cedar Park food pantries incl. Reveal Ministries",
+    "how_to_scrape": "WebSearch snippet sufficient; foodpantries.org city index pages list church pantries with address/phone"
+  },
+  {
+    "url": "https://www.celebration.church/ministries",
+    "what": "Celebration Church outreach/food distribution ministries page",
+    "how_to_scrape": "WebSearch snippet; site is JS-heavy, WebFetch may need retry or use KVUE news article as backup source"
+  },
+  {
+    "url": "https://www.kvue.com/article/news/health/coronavirus/celebration-church-food-and-medical-supplies-distribution/269-ee0511cf-6d14-4669-997e-08cdbbe3e856",
+    "what": "News article confirming Celebration Church food distribution scale/partnership",
+    "how_to_scrape": "WebFetch standard news article"
+  },
+  {
+    "url": "https://www.gatewaychurch.com/need-help/feed-the-community/",
+    "what": "Gateway Church Feed the Community pantry page",
+    "how_to_scrape": "NOTE: WebFetch returned this as a JPEG image (page renders info as an image graphic) - could not OCR via WebFetch; used foodpantries.org listing instead as data source"
+  },
+  {
+    "url": "https://www.foodpantries.org/li/feed_the_com-Austin-78729",
+    "what": "Gateway Church pantry listing with hours/address/phone",
+    "how_to_scrape": "WebFetch/WebSearch snippet works fine"
+  },
+  {
+    "url": "https://www.foodpantries.org/li/tx_78660_saffron-trust-food-for-all-project-pflugerville",
+    "what": "Food For All Project at Abundant Life Church, Pflugerville",
+    "how_to_scrape": "WebSearch snippet sufficient"
+  },
+  {
+    "url": "https://ilcpville.org/food-pantry/",
+    "what": "Immanuel Lutheran Church Pflugerville food pantry (Yellow Brick House) - note conflicting info about possible closure 7/17/2026",
+    "how_to_scrape": "WebFetch worked directly, plain HTML"
+  },
+  {
+    "url": "https://www.centralchurchofchrist.cc/2022/11/food-pantry/",
+    "what": "Central Church of Christ Pflugerville food pantry blog post",
+    "how_to_scrape": "Not directly fetched; WebSearch snippet only, recommend WebFetch for full hours"
+  },
+  {
+    "url": "https://huttoresourcecenter.org/",
+    "what": "Hutto Resource Center food pantry (hosted at Hutto Community Church)",
+    "how_to_scrape": "WebSearch snippet used; direct fetch recommended for verifying church hosting relationship"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/file/3236/download?token=G-2sXj_S",
+    "what": "Emergency Food Assistance Referral List (PDF) - includes Jarrell UMC and other church pantries across Central Texas",
+    "how_to_scrape": "WebFetch failed to parse PDF binary; would need pdf skill/download + text extraction to get full list"
+  },
+  {
+    "url": "https://arumc.org/wp-content/uploads/2022/08/Food-Ministries-List-2022.pdf",
+    "what": "Central Texas Conference (Rio Texas/ARUMC) UMC Food Ministries List 2022 - comprehensive list of UMC food pantries by district/county/city",
+    "how_to_scrape": "WebFetch could not parse this PDF (binary/compressed). RECOMMEND: download directly and use pdf skill (pymupdf) to extract full table - likely contains many more Williamson County UMC pantries not yet captured"
+  },
+  {
+    "url": "https://www.shepherdshearttaylor.org/",
+    "what": "Shepherd's Heart Taylor pantry hours/address",
+    "how_to_scrape": "WebSearch snippet sufficient"
+  },
+  {
+    "url": "https://www.operationlh.org/food-pantry",
+    "what": "Operation Liberty Hill food pantry hours/eligibility",
+    "how_to_scrape": "WebSearch snippet sufficient"
+  },
+  {
+    "url": "https://www.findhelp.org/food/food-pantry--taylor-tx",
+    "what": "Taylor TX food pantry directory incl. Agape/Oasis Church",
+    "how_to_scrape": "WebSearch snippet sufficient"
+  },
+  {
+    "url": "https://www.rrasc.org/what-we-do/",
+    "what": "Round Rock Area Serving Center program/hours page",
+    "how_to_scrape": "Static page; hours and address in body text, WebFetch works directly"
+  },
+  {
+    "url": "https://www.rrasc.org/contacts/",
+    "what": "RRASC contact info",
+    "how_to_scrape": "Static page"
+  },
+  {
+    "url": "https://www.caringplacetx.org/who-we-are/who-we-are.html/title/frequently-asked-questions",
+    "what": "The Caring Place FAQ with pantry hours/eligibility",
+    "how_to_scrape": "Static page, WebFetch works"
+  },
+  {
+    "url": "https://huttoresourcecenter.org/food-pantry/",
+    "what": "Hutto Resource Center official food pantry page",
+    "how_to_scrape": "Static page, WebFetch works directly, most authoritative source used"
+  },
+  {
+    "url": "https://www.shepherdshearttaylor.org/contact-us",
+    "what": "Shepherd's Heart Taylor pantry hours",
+    "how_to_scrape": "Static page"
+  },
+  {
+    "url": "https://www.freefood.org/l/city-of-taylor-community-connection",
+    "what": "freefood.org listing for Taylor Community Connection distribution",
+    "how_to_scrape": "Secondary aggregator listing, verify against city of Taylor site if possible"
+  },
+  {
+    "url": "https://www.serve.love/resources/food-pantries/leander-tx/leander-church-of-christ-brighter-days-j185lfpc/",
+    "what": "Leander Church of Christ HOPE senior food program listing",
+    "how_to_scrape": "Aggregator listing page"
+  },
+  {
+    "url": "https://www.findhelp.org/food/food-pantry--leander-tx",
+    "what": "findhelp.org search results for Leander pantries, incl HOPE Food Pantry at Lacy Dr",
+    "how_to_scrape": "findhelp.org requires reading search result snippets; login not required for basic listing view"
+  },
+  {
+    "url": "https://www.revealresourcecenter.com/",
+    "what": "Reveal Resource Center Cedar Park official site",
+    "how_to_scrape": "Static page, WebFetch works"
+  },
+  {
+    "url": "https://www.7cups.com/local/us/tx/cedar-park/food/food-pantry-7111242812",
+    "what": "Austin Vineyard Church Cedar Park pantry listing",
+    "how_to_scrape": "Aggregator listing"
+  },
+  {
+    "url": "https://fbcpville.org/go/food-pantry/",
+    "what": "First Baptist Church Pflugerville official pantry page",
+    "how_to_scrape": "Static page, WebFetch works"
+  },
+  {
+    "url": "https://bancosdecomida.com/banco/food-for-all-pflugerville-food-pantry/",
+    "what": "Food For All at Abundant LIFE Church Pflugerville listing (Spanish-language directory)",
+    "how_to_scrape": "Static page"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/file/7738/download?token=T69OOBhW",
+    "what": "Central Texas Food Bank mobile pantry schedule PDF (bilingual)",
+    "how_to_scrape": "PDF download, needs PDF text extraction"
+  },
+  {
+    "url": "https://www.eternalfaith.org/worship-with-us/food-pantry/",
+    "what": "Eternal Faith Baptist Church Manor official pantry page",
+    "how_to_scrape": "Static page, WebFetch works"
+  },
+  {
+    "url": "https://feedam.org/resource/173531",
+    "what": "Travis County Community Center at Manor listing",
+    "how_to_scrape": "Aggregator listing"
+  },
+  {
+    "url": "https://www.findhelp.org/round-rock-seventh-day-adventist-church--round-rock-tx--food-pantry/5630487538958336",
+    "what": "Round Rock SDA Church food pantry listing",
+    "how_to_scrape": "findhelp.org listing page"
+  },
+  {
+    "url": "https://www.centraltexasfoodbank.org/location/austin-spanish-seventh-day-adventist",
+    "what": "Central Texas Food Bank partner page for Austin Spanish SDA",
+    "how_to_scrape": "Static page"
+  },
+  {
+    "url": "https://www.findhelp.org/alpha-seventh-day-adventist-church--austin-tx--food-pantry/6512979150110720?postal=78701",
+    "what": "Alpha SDA Church Austin pantry listing",
+    "how_to_scrape": "findhelp.org listing"
+  },
+  {
+    "url": "https://www.churchofjesuschrist.org/life/bishops-storehouse?lang=eng",
+    "what": "Official LDS church page explaining bishop's storehouse access model (referral only, not public drop-in)",
+    "how_to_scrape": "Static page"
+  },
+  {
+    "url": "https://vymaps.com/US/Lds-Bishop-s-Storehouse-Round-Rock-209390682520606/",
+    "what": "Map listing confirming Round Rock storehouse address/phone",
+    "how_to_scrape": "Aggregator map listing"
+  },
+  {
+    "url": "https://www.idealist.org/es/ong/3ef5c392f6f04349b4e951049c69f710-circle-of-hope-community-center-pflugerville",
+    "what": "Circle of Hope Community Center Pflugerville nonprofit listing (Spanish)",
+    "how_to_scrape": "Static nonprofit directory page"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-round_rock",
+    "what": "foodpantries.org city directory for Round Rock",
+    "how_to_scrape": "Secondary aggregator, list of orgs with links to detail pages"
+  },
+  {
+    "url": "https://www.foodpantries.org/ci/tx-pflugerville",
+    "what": "foodpantries.org city directory for Pflugerville",
+    "how_to_scrape": "Secondary aggregator"
+  },
+  {
+    "url": "https://www.findhelp.org/food/food-pantry--round-rock-tx",
+    "what": "findhelp.org search results for Round Rock food pantries",
+    "how_to_scrape": "Secondary aggregator; postal code param narrows results"
+  },
+  {
+    "url": "https://geocoding.geo.census.gov/geocoder/locations/addressbatch",
+    "what": "US Census Bureau batch geocoder used to resolve lat/lng for all 38 merged entries",
+    "how_to_scrape": "POST multipart form with CSV (id,address,,,\"\") and benchmark=Public_AR_Current; 27/38 matched, remainder lacked a confirmed street address in source data"
+  }
+]
