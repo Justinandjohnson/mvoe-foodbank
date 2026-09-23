@@ -1,23 +1,37 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import austinFoodIndex from '../data/austinFoodIndex.json';
 
 // Help-heatmap weighting per Austin index entry type. Events only count if within 14 days.
 const HEAT_WEIGHTS = {
   food_bank: 3, pantry: 2, meal: 2, community_fridge: 1.5, program: 1, event: 2,
 };
-const HEAT_POINTS = (() => {
+
+function resolveHeatType(marker) {
+  if (marker.austinType && HEAT_WEIGHTS[marker.austinType]) return marker.austinType;
+  if (marker.displayType && HEAT_WEIGHTS[marker.displayType]) return marker.displayType;
+  if (marker.type && HEAT_WEIGHTS[marker.type]) return marker.type;
+  if (typeof marker.markerType === 'string' && marker.markerType.indexOf('austin_') === 0) {
+    const raw = marker.markerType.slice('austin_'.length);
+    return HEAT_WEIGHTS[raw] ? raw : 'program';
+  }
+  return 'program';
+}
+
+function buildHeatPoints(markers) {
   const now = Date.now();
   const twoWeeks = now + 14 * 24 * 60 * 60 * 1000;
-  return (austinFoodIndex.entries || [])
-    .filter((e) => Number.isFinite(Number(e.lat)) && Number.isFinite(Number(e.lng)))
-    .filter((e) => {
-      if (e.type !== 'event') return true;
-      const t = new Date(e.event_date).getTime();
+  return (markers || [])
+    .filter((marker) => Number.isFinite(Number(marker.lat)) && Number.isFinite(Number(marker.lng)))
+    .filter((marker) => {
+      if (resolveHeatType(marker) !== 'event') return true;
+      const t = new Date(marker.event_date || marker.startTime).getTime();
       return Number.isFinite(t) && t >= now && t <= twoWeeks;
     })
-    .map((e) => [Number(e.lat), Number(e.lng), HEAT_WEIGHTS[e.type] || 1]);
-})();
+    .map((marker) => {
+      const type = resolveHeatType(marker);
+      return [Number(marker.lat), Number(marker.lng), HEAT_WEIGHTS[type] || 1];
+    });
+}
 
 /**
  * PIN TYPE SCHEME - CONSISTENT ACROSS ALL MAP MARKERS
@@ -540,10 +554,15 @@ function buildMapHtml() {
 </html>`;
 }
 
-export default function FoodBankMap({ markers = [], selectedId, focusRequest, onSelect, userLocation }) {
+export default function FoodBankMap({ markers = [], heatmapMarkers = [], selectedId, focusRequest, onSelect, userLocation }) {
   const iframeRef = useRef(null);
   const [iframeLoadTick, setIframeLoadTick] = useState(0);
   const serializedMarkers = useMemo(() => serializeMarkers(markers), [markers]);
+  const heatPoints = useMemo(() => buildHeatPoints(heatmapMarkers), [heatmapMarkers]);
+  const heatSignature = useMemo(
+    () => heatPoints.map((point) => point.join(':')).join('|'),
+    [heatPoints]
+  );
   const markerSignature = useMemo(
     () => serializedMarkers
       .map((marker) => `${marker.id}:${marker.lat}:${marker.lng}:${marker.liveClass}`)
@@ -568,14 +587,14 @@ export default function FoodBankMap({ markers = [], selectedId, focusRequest, on
           type: 'set_data',
           markers: serializedMarkers,
           userLocation: safeUserLocation,
-          heatPoints: HEAT_POINTS,
+          heatPoints,
         },
         '*'
       );
     } catch (_) {
       // The map iframe may not be ready yet.
     }
-  }, [iframeLoadTick, markerSignature, safeUserLocation, serializedMarkers]);
+  }, [heatPoints, heatSignature, iframeLoadTick, markerSignature, safeUserLocation, serializedMarkers]);
 
   useEffect(() => {
     if (iframeRef.current?.contentWindow && iframeLoadTick > 0) {
@@ -622,7 +641,7 @@ export default function FoodBankMap({ markers = [], selectedId, focusRequest, on
               type: 'set_data',
               markers: serializedMarkers,
               userLocation: safeUserLocation,
-              heatPoints: HEAT_POINTS,
+              heatPoints,
             },
             '*'
           );
@@ -634,7 +653,7 @@ export default function FoodBankMap({ markers = [], selectedId, focusRequest, on
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [onSelect, serializedMarkers, safeUserLocation]);
+  }, [heatPoints, heatSignature, onSelect, serializedMarkers, safeUserLocation]);
 
   if (Platform.OS !== 'web') {
     return <View style={styles.fallback} />;

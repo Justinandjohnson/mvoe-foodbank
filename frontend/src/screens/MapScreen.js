@@ -40,7 +40,6 @@ import { publicPhotoUrl } from '../api/supabaseClient';
 import { pickAndUploadImage } from '../api/imageUpload';
 import { useAuth } from '../contexts/AuthContext';
 import { config } from '../../config';
-import austinFoodIndex from '../data/austinFoodIndex.json';
 
 const AUSTIN_TYPE_LABELS = {
   food_bank: 'Food Bank',
@@ -50,25 +49,6 @@ const AUSTIN_TYPE_LABELS = {
   program: 'Program',
   event: 'Event',
 };
-
-const AUSTIN_INDEX_MARKERS = (austinFoodIndex?.entries || [])
-  .filter((entry) => Number.isFinite(Number(entry?.lat)) && Number.isFinite(Number(entry?.lng)) && entry?.id)
-  .map((entry) => ({
-    id: `austin-${entry.id}`,
-    source: 'austinIndex',
-    markerType: `austin_${entry.type || 'program'}`,
-    austinType: entry.type || 'program',
-    name: entry.name || 'Untitled location',
-    lat: Number(entry.lat),
-    lng: Number(entry.lng),
-    address: entry.address || '',
-    phone: entry.phone || '',
-    website: entry.website || entry.source_url || '',
-    hours: entry.hours || '',
-    eligibility: entry.eligibility || '',
-    event_date: entry.event_date || null,
-    last_verified: entry.last_verified || null,
-  }));
 
 const LAYER_OPTIONS = [
   { key: 'foodBanks', label: 'Food Banks', icon: 'business', color: '#22C55E' },
@@ -517,6 +497,7 @@ export default function MapScreen({ navigation, route }) {
     foodBanks: [],
     beacons: [],
     events: [],
+    austinIndex: [],
     userBeacon: null,
     generatedAt: null,
   });
@@ -633,7 +614,7 @@ export default function MapScreen({ navigation, route }) {
   }), [volunteerComposerAnim]);
 
   const markerPool = useMemo(
-    () => [...feed.foodBanks, ...feed.beacons, ...feed.events],
+    () => [...feed.foodBanks, ...feed.beacons, ...feed.events, ...feed.austinIndex],
     [feed]
   );
 
@@ -643,7 +624,7 @@ export default function MapScreen({ navigation, route }) {
     if (layers.foodBanks) markers.push(...feed.foodBanks);
     if (layers.beacons) markers.push(...feed.beacons);
     if (layers.events) markers.push(...feed.events);
-    if (layers.austinIndex) markers.push(...AUSTIN_INDEX_MARKERS);
+    if (layers.austinIndex) markers.push(...feed.austinIndex);
 
     return markers.filter(
       (marker) => typeof marker.lat === 'number' && typeof marker.lng === 'number'
@@ -956,6 +937,7 @@ export default function MapScreen({ navigation, route }) {
         foodBanks: nextFeed.foodBanks || [],
         beacons: nextFeed.beacons || [],
         events: nextFeed.events || [],
+        austinIndex: nextFeed.austinIndex || [],
         userBeacon: nextFeed.userBeacon || null,
         generatedAt: nextFeed.generatedAt || new Date().toISOString(),
       });
@@ -1846,6 +1828,7 @@ export default function MapScreen({ navigation, route }) {
     <View style={styles.container}>
       <FoodBankMap
         markers={visibleMarkers}
+        heatmapMarkers={feed.austinIndex}
         selectedId={selectedMarkerId}
         focusRequest={mapFocusRequest}
         onSelect={(marker) => {
@@ -2027,7 +2010,7 @@ export default function MapScreen({ navigation, route }) {
                 : layer.key === 'beacons'
                   ? feed.beacons.length
                   : layer.key === 'austinIndex'
-                    ? AUSTIN_INDEX_MARKERS.length
+                    ? feed.austinIndex.length
                     : feed.events.length;
 
               const active = layers[layer.key];

@@ -9,6 +9,7 @@ import {
 } from '../utils/liveMap';
 
 const MAX_BEACONS = 200;
+const MAX_AUSTIN_INDEX_ENTRIES = 1000;
 
 // Postgres columns are snake_case; the serializers expect camelCase.
 function toBeacon(row) {
@@ -63,6 +64,42 @@ function toEvent(row) {
   };
 }
 
+function formatDateOnly(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString().slice(0, 10);
+}
+
+function toAustinIndexMarker(row) {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const sourceId = metadata.austinId || row.fingerprint || row.id;
+  const type = row.venue_type || metadata.venueType || 'program';
+  const latitude = Number(row.latitude);
+  const longitude = Number(row.longitude);
+
+  if (!sourceId || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return {
+    id: `austin-${sourceId}`,
+    source: 'austinIndex',
+    markerType: `austin_${type}`,
+    austinType: type,
+    name: row.canonical_name || 'Untitled location',
+    lat: latitude,
+    lng: longitude,
+    address: row.address || '',
+    phone: row.phone || '',
+    website: row.website || row.source_url || '',
+    hours: row.hours || '',
+    eligibility: row.eligibility_notes || '',
+    event_date: metadata.eventDate || null,
+    last_verified: formatDateOnly(row.last_verified_at || metadata.lastVerified),
+  };
+}
+
 async function fetchLiveBeacons() {
   const { data, error } = await supabase
     .from('food_beacons')
@@ -82,14 +119,48 @@ async function fetchLiveBeacons() {
     .filter((b) => !b.availableUntil || new Date(b.availableUntil) > now);
 }
 
+async function fetchAustinIndexMarkers() {
+  const { data, error } = await supabase
+    .from('food_bank_directory_entries')
+    .select(`
+      id,
+      fingerprint,
+      canonical_name,
+      source_url,
+      website,
+      phone,
+      address,
+      latitude,
+      longitude,
+      hours,
+      eligibility_notes,
+      venue_type,
+      discovery_status,
+      disappeared_at,
+      last_verified_at,
+      metadata
+    `)
+    .eq('discovery_status', 'indexed')
+    .is('disappeared_at', null)
+    .order('canonical_name', { ascending: true })
+    .limit(MAX_AUSTIN_INDEX_ENTRIES);
+
+  if (error) throw error;
+
+  return (data || [])
+    .map(toAustinIndexMarker)
+    .filter(Boolean);
+}
+
 export const mapService = {
   async getLiveFeed(params = {}) {
     const { latitude, longitude, radius } = params;
 
-    const [beaconRows, orgRes, eventRes, mine] = await Promise.all([
+    const [beaconRows, orgRes, eventRes, austinIndexRows, mine] = await Promise.all([
       fetchLiveBeacons(),
       supabase.from('organizations').select('*').eq('is_active', true).limit(500),
       supabase.from('community_events').select('*').limit(200),
+      fetchAustinIndexMarkers(),
       foodBeaconService.getMineRaw(),
     ]);
 
@@ -100,6 +171,7 @@ export const mapService = {
     let foodBanks = orgRes.data.map(toFoodBank).map((f) => buildFoodBankMapItem(f, now));
     let beacons = beaconRows.map((b) => buildBeaconMapItem(b, now));
     let events = eventRes.data.map(toEvent).map((e) => buildCommunityEventMapItem(e, now));
+    let austinIndex = austinIndexRows;
 
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       const miles = radius || 25;
@@ -107,6 +179,9 @@ export const mapService = {
       foodBanks = foodBanks.filter(near);
       beacons = beacons.filter(near);
       events = events.filter(near);
+      austinIndex = austinIndex.filter((item) => (
+        withinRadius({ latitude: item.lat, longitude: item.lng }, latitude, longitude, miles)
+      ));
     }
 
     return {
@@ -114,6 +189,7 @@ export const mapService = {
         foodBanks,
         beacons,
         events,
+        austinIndex,
         userBeacon: mine ? buildBeaconMapItem(mine, now) : null,
       },
     };
