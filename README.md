@@ -5,7 +5,6 @@ Monorepo for the Mvoe food bank platform.
 - `backend/`: Fastify + Prisma + BullMQ API
 - `frontend/`: Expo / React Native / React Native Web app
 - `python_backend/`: FastAPI service for volunteer-coordination and agent-chat flows
-- `render.yaml`: Render Blueprint for the full stack
 
 ## What Runs Where
 
@@ -13,7 +12,7 @@ Monorepo for the Mvoe food bank platform.
 - Python agent API: `python_backend/app/main.py`
 - Frontend web build: `frontend/dist` after `npm run build:web`
 - Database: PostgreSQL
-- Queue/cache: Redis / Render Key Value
+- Queue/cache: Redis
 
 ## Local Development
 
@@ -162,25 +161,11 @@ python3 -m http.server 4173 --directory dist
 - **Supported portal mode vs generic mode**: known portal families (for example Grants.gov/Submittable-style flows) are treated as supported-portal workflows; everything else falls back to generic browser-assisted inspection.
 - **Dynamic grant data** (open opportunities, deadlines, exact award windows) should always be re-verified before submission.
 
-## Render Deployment
+## Deployment
 
-This repo includes a Render Blueprint at `render.yaml`.
-
-### Resources in the blueprint
-
-- `mvoe-api`: Node web service for the Fastify API
-- `mvoe-agent-api`: Python web service for volunteer + grant/agent support APIs
-- `mvoe-web`: Static site for the Expo web build
-- `mvoe-postgres`: PostgreSQL database
-- `mvoe-redis`: Redis-compatible Key Value store
-
-### Deployment flow
-
-1. Create a new Render Blueprint from this repo.
-2. Sync `render.yaml`.
-3. When Render prompts for `sync: false` values, provide the production secrets and URLs.
-4. Let Render provision the database and Redis instance.
-5. Deploy the backend first, then the frontend.
+- Frontend: Cloudflare Pages (`mvoe.pages.dev`)
+- Data: Supabase
+- Scraping/index pipeline: runs locally on the operator machine
 
 ### Required secrets and values
 
@@ -215,7 +200,7 @@ Frontend service:
 
 ### Notes
 
-- `backend/src/config/index.js` now reads Render's `PORT` automatically, so the API can run as a normal Render web service.
+- `backend/src/config/index.js` reads `PORT` from the environment automatically, so the API can run as a normal web service.
 - The frontend accepts either `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` or the legacy `EXPO_PUBLIC_MAPBOX_TOKEN`.
 - The legacy auth context file is now a compatibility re-export of the canonical context in `frontend/src/contexts/AuthContext.js`.
 
@@ -239,7 +224,4 @@ npm start
 cd frontend
 npm run web
 npm run build:web
-
-# Render blueprint validation, after logging in to Render CLI
-render blueprints validate render.yaml
 ```

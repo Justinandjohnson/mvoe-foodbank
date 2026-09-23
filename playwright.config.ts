@@ -14,7 +14,7 @@ export default defineConfig({
 
   use: {
     // Default base URL — overridden per project where needed
-    baseURL: 'https://mvoe-web.onrender.com',
+    baseURL: process.env.TEST_FRONTEND_URL || 'http://localhost:8081',
     trace: 'on-first-retry',
     // Free-tier Render services can be slow to respond
     actionTimeout: 30_000,

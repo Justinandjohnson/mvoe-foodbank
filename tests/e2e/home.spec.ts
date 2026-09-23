@@ -1,14 +1,14 @@
 /**
- * E2E UI Tests — hits live https://mvoe-web.onrender.com
+ * E2E UI Tests — hits the configured frontend URL
  *
  * Tests verify the frontend renders and basic navigation works
- * against the deployed Render static site.
+ * against the deployed frontend.
  */
 
 import { test, expect } from '@playwright/test';
 
-const FRONTEND_URL = 'https://mvoe-web.onrender.com';
-const API_URL      = 'https://mvoe-api.onrender.com';
+const FRONTEND_URL = process.env.TEST_FRONTEND_URL || 'http://localhost:8081';
+const API_URL      = process.env.TEST_API_URL || 'http://127.0.0.1:3100';
 
 // ---------------------------------------------------------------------------
 // Page load & basic rendering
@@ -89,7 +89,7 @@ test.describe('API connectivity from frontend', () => {
 
     // Log all API requests so we can see what backend URL the frontend is using
     // NOTE: If the frontend is calling localhost:3000, the NEXT_PUBLIC_API_URL / EXPO_PUBLIC_API_URL
-    // env var in the Render static site build needs to be set to https://mvoe-api.onrender.com
+    // env var in the hosted build must set EXPO_PUBLIC_API_URL
     console.log('API requests made by frontend:', apiRequests);
 
     // At least verify the page loaded successfully regardless of API config

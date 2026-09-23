@@ -1,6 +1,6 @@
 import process from 'node:process';
 
-const API_BASE_URL = process.env.MVOE_API_URL || 'https://mvoe-api.onrender.com';
+const API_BASE_URL = process.env.MVOE_API_URL || 'http://127.0.0.1:3100';
 const ADMIN_EMAIL = process.env.MVOE_ADMIN_EMAIL || 'admin@mvoe-test.com';
 const ADMIN_PASSWORD = process.env.MVOE_ADMIN_PASSWORD || 'TestAdmin123!';
 

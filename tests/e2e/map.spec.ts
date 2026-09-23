@@ -5,7 +5,7 @@
  * composer, food-bank detail panel, and marker interactions.
  *
  * Targets local Expo web build by default; override via env:
- *   TEST_FRONTEND_URL=https://mvoe-web.onrender.com npx playwright test map
+ *   TEST_FRONTEND_URL=http://localhost:8081 npx playwright test map
  */
 
 import { test, expect, Page } from '@playwright/test';

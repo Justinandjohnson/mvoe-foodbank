@@ -11,9 +11,9 @@ def test_build_allowed_origins_uses_dev_defaults() -> None:
 
 
 def test_build_allowed_origins_uses_frontend_url_in_production() -> None:
-    origins = build_allowed_origins("production", "https://mvoe-web.onrender.com")
+    origins = build_allowed_origins("production", "https://app.example.com")
 
-    assert origins == ["https://mvoe-web.onrender.com"]
+    assert origins == ["https://app.example.com"]
 
 
 def test_next_key_version_increments_existing_value() -> None:

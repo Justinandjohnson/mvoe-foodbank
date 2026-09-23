@@ -6,15 +6,13 @@ const DEFAULT_LOCAL_API_URL = 'http://127.0.0.1:3100';
 const DEFAULT_LOCAL_WS_URL = 'ws://127.0.0.1:3100';
 const DEFAULT_LOCAL_AGENT_API_URL = 'http://127.0.0.1:8001';
 
-const DEFAULT_HOSTED_API_URL = 'https://mvoe-api.onrender.com';
-
 export const API_URL =
   process.env.EXPO_PUBLIC_API_URL ||
-  (isLocalBrowser ? DEFAULT_LOCAL_API_URL : DEFAULT_HOSTED_API_URL);
+  (isLocalBrowser ? DEFAULT_LOCAL_API_URL : '');
 
 export const WS_URL =
   process.env.EXPO_PUBLIC_WS_URL ||
-  (isLocalBrowser ? DEFAULT_LOCAL_WS_URL : 'wss://mvoe-api.onrender.com');
+  (isLocalBrowser ? DEFAULT_LOCAL_WS_URL : '');
 
 export const AGENT_API_URL =
   process.env.EXPO_PUBLIC_AGENT_API_URL ||

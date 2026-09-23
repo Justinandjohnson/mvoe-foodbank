@@ -1,5 +1,5 @@
 /**
- * Food Bank API Tests — hits live https://mvoe-api.onrender.com
+ * Food Bank API Tests — hits the configured API URL
  *
  * Seed data created via API (2026-04-17):
  *   Users  : donor@mvoe-test.com / TestDonor123!
@@ -14,7 +14,7 @@
 
 import { test, expect, request as apiRequest } from '@playwright/test';
 
-const BASE_URL = 'https://mvoe-api.onrender.com';
+const BASE_URL = process.env.TEST_API_URL || 'http://127.0.0.1:3100';
 
 // Known seeded IDs
 const SF_ORG_ID  = '1e4cb7dc-bf1c-4173-8b91-1da645493cdd';
