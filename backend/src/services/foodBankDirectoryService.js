@@ -3,6 +3,15 @@ import { getPrismaClient } from '../utils/database.js';
 import cacheService from '../utils/redis.js';
 import { config } from '../config/index.js';
 import ZenClient from '../mcp/zenClient.js';
+import {
+  buildFingerprint,
+  extractDomain,
+  normalizePhone,
+  normalizeStateValue,
+  normalizeText,
+  normalizeUrl,
+  normalizeWhitespace,
+} from './directoryFingerprint.js';
 
 const prisma = getPrismaClient();
 const aiClient = new ZenClient();
@@ -63,55 +72,9 @@ function getOfficialRegionProvider(region) {
   return OFFICIAL_REGION_PROVIDERS[regionProviderKey(region)] || null;
 }
 
-function normalizeWhitespace(value = '') {
-  return String(value).replace(/\s+/g, ' ').trim();
-}
-
-function normalizeText(value = '') {
-  return normalizeWhitespace(value)
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function normalizePhone(value) {
-  if (!value) return null;
-  const digits = String(value).replace(/\D/g, '');
-  if (digits.length < 10) return null;
-  return digits.slice(-10);
-}
-
-function normalizeStateValue(value) {
-  const normalized = normalizeWhitespace(value || '');
-  if (!normalized) return '';
-  return normalized.length <= 3 ? normalized.toUpperCase() : normalized;
-}
-
-function normalizeUrl(value) {
-  if (!value) return null;
-
-  try {
-    const url = new URL(String(value).trim());
-    const hostname = url.hostname.replace(/^www\./i, '').toLowerCase();
-    const pathname = url.pathname.replace(/\/+$/, '') || '/';
-    return `https://${hostname}${pathname}`;
-  } catch {
-    return null;
-  }
-}
-
-function extractDomain(value) {
-  const normalized = normalizeUrl(value);
-  if (!normalized) return null;
-
-  try {
-    return new URL(normalized).hostname.replace(/^www\./i, '').toLowerCase();
-  } catch {
-    return null;
-  }
-}
+// normalizeWhitespace / normalizeText / normalizePhone / normalizeStateValue / normalizeUrl /
+// extractDomain / buildFingerprint now live in ./directoryFingerprint.js (imported above) so
+// the import + reconciliation scripts share one implementation.
 
 function decodeHtmlEntities(value = '') {
   return String(value)
@@ -283,12 +246,6 @@ function hashText(value = '') {
 
 function buildAccessFoodRecordUrl(locationId) {
   return `https://api.accessfood.org/location/${locationId}`;
-}
-
-function buildFingerprint(candidate) {
-  if (candidate.websiteDomain) return `site:${candidate.websiteDomain}`;
-  if (candidate.normalizedPhone) return `phone:${candidate.normalizedPhone}`;
-  return `name:${candidate.normalizedName}|${normalizeText(candidate.city)}|${normalizeText(candidate.state)}`;
 }
 
 function isLikelyFoodResource({ title = '', snippet = '', text = '' }) {
@@ -1757,4 +1714,4 @@ class FoodBankDirectoryService {
 const foodBankDirectoryService = new FoodBankDirectoryService();
 
 export default foodBankDirectoryService;
-export { REVIEW_INTERVAL_MS, regionLabel };
+export { REVIEW_INTERVAL_MS, regionLabel, buildFingerprint };

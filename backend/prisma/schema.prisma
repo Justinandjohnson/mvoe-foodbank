@@ -10,6 +10,39 @@ datasource db {
 }
 
 // ============================================================================
+// DIRECTORY ENUMS - additive, introduced 2026-09-22 for the freshness/reconciliation work.
+// Every field that uses these carries a @default, so existing rows migrate without backfill.
+// ============================================================================
+
+// What kind of resource a directory entry is. Mirrors the frontend marker palette 1:1.
+enum VenueType {
+  food_bank
+  pantry
+  community_fridge
+  meal
+  program
+  event
+}
+
+// Where an entry came from. Keeps a person's on-the-map beacon strictly separate from
+// a venue we discovered by scraping, so the two can never be conflated in queries.
+enum EntryOrigin {
+  scraped
+  partner
+  user_beacon
+}
+
+// Reconciliation state of a scraped source record against the directory:
+// matched = this source corresponds to an entry we already have;
+// unmatched = the source mentions a place we do NOT have (an "online has it, we don't" gap);
+// ignored = deliberately not reconciled (blocked/irrelevant domain).
+enum SourceMatchStatus {
+  matched
+  unmatched
+  ignored
+}
+
+// ============================================================================
 // PHASE 1: FOUNDATION TABLES
 // ============================================================================
 
@@ -386,6 +419,9 @@ model FoodBankIndexRegion {
   state         String
   country       String    @default("US")
   searchQueries Json?     @map("search_queries")
+  // Per-city knobs, so adding a city is config-only and never a schema change:
+  // { radiusKm, bbox: { minLat, minLng, maxLat, maxLng }, cadence, sources: [...] }
+  config        Json?
   isActive      Boolean   @default(true) @map("is_active")
   lastRunAt     DateTime? @map("last_run_at")
   nextRunAt     DateTime? @map("next_run_at")
@@ -395,6 +431,7 @@ model FoodBankIndexRegion {
   runs          FoodBankIndexRun[]
   entries       FoodBankDirectoryEntry[]
   sourceRecords FoodBankSourceRecord[]
+  sources       FoodBankSource[]
 
   @@unique([city, state, country])
   @@index([isActive, nextRunAt])
@@ -451,6 +488,18 @@ model FoodBankDirectoryEntry {
   hours            String?
   description      String?
   eligibilityNotes String?   @map("eligibility_notes")
+  // --- additive 2026-09-22: type, provenance, freshness, reconciliation ---
+  venueType             VenueType   @default(food_bank) @map("venue_type")
+  origin                EntryOrigin @default(scraped)
+  confidence            Float       @default(1.0)
+  // Lower wins on conflict (freshest-wins precedence). 10 = official authority, 50 = org's
+  // own site, 100 = third-party aggregator. Defaults to the weakest tier on purpose.
+  sourcePriority        Int         @default(100) @map("source_priority")
+  // Match key across sources (domain > phone > name|city|state). Deliberately NOT the
+  // @unique fingerprint: a collision here is a useful "same place" signal, not an error.
+  normalizedFingerprint String?     @map("normalized_fingerprint")
+  // Set when a source that used to list this place no longer does. Null = not observed gone.
+  disappearedAt         DateTime?   @map("disappeared_at")
   discoveryStatus  String    @default("indexed") @map("discovery_status") // 'indexed', 'pending_review', 'ignored', 'stale'
   reviewStatus     String    @default("pending") @map("review_status") // 'pending', 'auto_applied', 'approved', 'rejected'
   firstSeenAt      DateTime  @default(now()) @map("first_seen_at")
@@ -471,6 +520,10 @@ model FoodBankDirectoryEntry {
   @@index([nextReviewAt])
   @@index([websiteDomain])
   @@index([normalizedPhone])
+  @@index([regionId, latitude, longitude])
+  @@index([regionId, firstSeenAt(sort: Desc)])
+  @@index([regionId, origin, venueType, discoveryStatus])
+  @@index([normalizedFingerprint])
   @@map("food_bank_directory_entries")
 }
 
@@ -508,6 +561,10 @@ model FoodBankSourceRecord {
   snippet       String?
   contentHash   String?  @map("content_hash")
   extractedData Json?    @map("extracted_data")
+  // --- additive 2026-09-22: reconciliation ---
+  matchStatus           SourceMatchStatus @default(unmatched) @map("match_status")
+  normalizedFingerprint String?           @map("normalized_fingerprint")
+  observedAt            DateTime          @default(now()) @map("observed_at")
   createdAt     DateTime @default(now()) @map("created_at")
 
   region FoodBankIndexRegion     @relation(fields: [regionId], references: [id], onDelete: Cascade)
@@ -517,7 +574,29 @@ model FoodBankSourceRecord {
   @@index([regionId, createdAt(sort: Desc)])
   @@index([url])
   @@index([contentHash])
+  @@index([normalizedFingerprint])
+  @@index([matchStatus])
   @@map("food_bank_source_records")
+}
+
+// Per-domain configuration: what we scrape, how much we trust it, and whether it is on.
+// This is what makes a new city config-only - sources are rows, not code.
+model FoodBankSource {
+  id          String   @id @default(uuid())
+  domain      String   @unique
+  qualityTier Int      @default(3) @map("quality_tier") // 1 = official authority, 2 = org's own site, 3 = aggregator
+  authority   String? // human-readable: "Central Texas Food Bank", "City of Austin"
+  enabled     Boolean  @default(true)
+  regionId    String?  @map("region_id")
+  config      Json? // { cadence: 'weekly'|'daily', parserKey, urlPatterns: [...] }
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  region FoodBankIndexRegion? @relation(fields: [regionId], references: [id], onDelete: SetNull)
+
+  @@index([enabled, qualityTier])
+  @@index([regionId])
+  @@map("food_bank_sources")
 }
 
 model PricingCatalogItem {
