@@ -645,7 +645,7 @@ export default function MapScreen({ navigation, route }) {
   const [markerDetailVisible, setMarkerDetailVisible] = useState(false);
   const [heroCollapsed, setHeroCollapsed] = useState(true);
   const anyComposerOpen = beaconEditorVisible || eventEditorVisible || volunteerEditorVisible;
-  const showHeroBody = !anyComposerOpen && (!isMobile || !heroCollapsed);
+  const showHeroBody = !anyComposerOpen && !heroCollapsed;
   const [layers, setLayers] = useState({
     foodBanks: true,
     pantries: true,
@@ -724,9 +724,8 @@ export default function MapScreen({ navigation, route }) {
     return Math.max(306, windowWidth - 28);
   }, [windowWidth]);
   const compactHeroWidth = useMemo(() => {
-    if (windowWidth >= 1520) return 840;
-    if (windowWidth >= 1280) return 760;
-    if (windowWidth >= 980) return 690;
+    if (windowWidth >= 1280) return 620;
+    if (windowWidth >= 980) return 580;
     return Math.max(320, windowWidth - 28);
   }, [windowWidth]);
   const beaconComposerAnimatedStyle = useMemo(() => ({
@@ -820,6 +819,11 @@ export default function MapScreen({ navigation, route }) {
     ...counts,
     [option.key]: timeFilteredMarkers.filter((marker) => getMarkerCategory(marker) === option.key).length,
   }), {}), [timeFilteredMarkers]);
+
+  const activeLayerCount = useMemo(
+    () => LAYER_OPTIONS.filter((option) => layers[option.key]).length,
+    [layers]
+  );
 
   const selectedMarker = useMemo(
     () => markerPool.find((marker) => marker.id === selectedMarkerId) || null,
@@ -1265,6 +1269,14 @@ export default function MapScreen({ navigation, route }) {
       ...current,
       [key]: !current[key],
     }));
+  }
+
+  function toggleAllLayers() {
+    const shouldShowAll = activeLayerCount === 0;
+    setLayers(LAYER_OPTIONS.reduce((next, option) => ({
+      ...next,
+      [option.key]: shouldShowAll,
+    }), {}));
   }
 
   async function selectTimeMode(nextMode) {
@@ -2144,10 +2156,10 @@ export default function MapScreen({ navigation, route }) {
         <View style={styles.topStack}>
           {anyComposerOpen ? null : (
           <LinearGradient
-            colors={['rgba(15,23,42,0.92)', 'rgba(10,37,64,0.76)']}
+            colors={['rgba(9,24,43,0.78)', 'rgba(15,23,42,0.62)']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={[styles.heroCard, { width: compactHeroWidth }]}
+            style={[styles.heroCard, Platform.OS === 'web' && styles.heroGlass, { width: compactHeroWidth }]}
           >
 <View style={[styles.heroHeader, isMobile && styles.heroHeaderMobile]}>
               <View style={[styles.heroCopy, isMobile && styles.heroCopyMobile]}>
@@ -2161,24 +2173,24 @@ export default function MapScreen({ navigation, route }) {
                         ? 'Browse all places'
                         : formatReferenceTime(referenceTime)}
                 </Text>
-                <Text style={styles.compactStatusText}>{visibleMarkers.length} shown on the map</Text>
+                <Text style={styles.compactStatusText}>
+                  {visibleMarkers.length} of {timeFilteredMarkers.length} results · nearby pins group automatically
+                </Text>
               </View>
 
               <View style={[styles.heroActions, isMobile && styles.heroActionsMobile]}>
-                {isMobile ? (
-                  <TouchableOpacity
-                    style={styles.iconButton}
-                    onPress={() => setHeroCollapsed((current) => !current)}
-                    accessibilityLabel={heroCollapsed ? 'Expand map panel' : 'Collapse map panel'}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons
-                      name={heroCollapsed ? 'chevron-down' : 'chevron-up'}
-                      size={18}
-                      color="white"
-                    />
-                  </TouchableOpacity>
-                ) : null}
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={() => setHeroCollapsed((current) => !current)}
+                  accessibilityLabel={heroCollapsed ? 'Expand map controls' : 'Collapse map controls'}
+                  accessibilityRole="button"
+                >
+                  <Ionicons
+                    name={heroCollapsed ? 'chevron-down' : 'chevron-up'}
+                    size={18}
+                    color="white"
+                  />
+                </TouchableOpacity>
 
                 <TouchableOpacity
                   style={styles.iconButton}
@@ -2206,23 +2218,27 @@ export default function MapScreen({ navigation, route }) {
                   )}
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.iconButton}
-                  onPress={handleZoomIn}
-                  accessibilityLabel="Zoom in map"
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="add" size={18} color="white" />
-                </TouchableOpacity>
+                {!isMobile ? (
+                  <>
+                    <TouchableOpacity
+                      style={styles.iconButton}
+                      onPress={handleZoomIn}
+                      accessibilityLabel="Zoom in map"
+                      accessibilityRole="button"
+                    >
+                      <Ionicons name="add" size={18} color="white" />
+                    </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.iconButton}
-                  onPress={handleZoomOut}
-                  accessibilityLabel="Zoom out map"
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="remove" size={18} color="white" />
-                </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.iconButton}
+                      onPress={handleZoomOut}
+                      accessibilityLabel="Zoom out map"
+                      accessibilityRole="button"
+                    >
+                      <Ionicons name="remove" size={18} color="white" />
+                    </TouchableOpacity>
+                  </>
+                ) : null}
               </View>
             </View>
 
@@ -2285,6 +2301,21 @@ export default function MapScreen({ navigation, route }) {
 
           {!anyComposerOpen && !showHeroBody ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+              <TouchableOpacity
+                style={[styles.layerChip, styles.layerChipCompact, styles.layerMasterChip]}
+                onPress={toggleAllLayers}
+                accessibilityRole="button"
+                accessibilityLabel={activeLayerCount > 0 ? 'Hide all map categories' : 'Show all map categories'}
+              >
+                <Ionicons
+                  name={activeLayerCount > 0 ? 'eye-off-outline' : 'eye-outline'}
+                  size={16}
+                  color="white"
+                />
+                <Text style={styles.layerMasterChipText}>
+                  {activeLayerCount > 0 ? 'Hide all' : 'Show all'}
+                </Text>
+              </TouchableOpacity>
               {LAYER_OPTIONS.map((layer) => {
                 const active = layers[layer.key];
                 return (
@@ -2293,14 +2324,14 @@ export default function MapScreen({ navigation, route }) {
                     style={[styles.layerChip, styles.layerChipCompact, active && styles.layerChipActive]}
                     onPress={() => updateLayer(layer.key)}
                     accessibilityRole="button"
-                    accessibilityLabel={`${layer.glyph} means ${layer.label}; ${categoryCounts[layer.key] || 0} shown`}
+                    accessibilityLabel={`${layer.label}, ${active ? 'on' : 'off'}; ${categoryCounts[layer.key] || 0} available`}
                     accessibilityState={{ selected: active }}
                   >
                     <View style={[styles.legendGlyph, { backgroundColor: layer.color }]}>
                       <Text style={styles.legendGlyphText}>{layer.glyph}</Text>
                     </View>
                     <Text style={[styles.layerChipText, active && styles.layerChipTextActive]}>
-                      {layer.label} {categoryCounts[layer.key] || 0}
+                      {layer.label} {active ? categoryCounts[layer.key] || 0 : 'off'}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -2315,6 +2346,21 @@ export default function MapScreen({ navigation, route }) {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.chipRow}
           >
+            <TouchableOpacity
+              style={[styles.layerChip, styles.layerMasterChip]}
+              onPress={toggleAllLayers}
+              accessibilityRole="button"
+              accessibilityLabel={activeLayerCount > 0 ? 'Hide all map categories' : 'Show all map categories'}
+            >
+              <Ionicons
+                name={activeLayerCount > 0 ? 'eye-off-outline' : 'eye-outline'}
+                size={17}
+                color="white"
+              />
+              <Text style={styles.layerMasterChipText}>
+                {activeLayerCount > 0 ? 'Hide all' : 'Show all'}
+              </Text>
+            </TouchableOpacity>
             {LAYER_OPTIONS.map((layer) => {
               const active = layers[layer.key];
 
@@ -2328,14 +2374,14 @@ export default function MapScreen({ navigation, route }) {
                   ]}
                   onPress={() => updateLayer(layer.key)}
                   accessibilityRole="button"
-                  accessibilityLabel={`${layer.glyph} means ${layer.label}; ${categoryCounts[layer.key] || 0} shown`}
+                    accessibilityLabel={`${layer.label}, ${active ? 'on' : 'off'}; ${categoryCounts[layer.key] || 0} available`}
                   accessibilityState={{ selected: active }}
                 >
                   <View style={[styles.legendGlyph, { backgroundColor: layer.color }]}>
                     <Text style={styles.legendGlyphText}>{layer.glyph}</Text>
                   </View>
                   <Text style={[styles.layerChipText, active && styles.layerChipTextActive]}>
-                    {layer.label} {categoryCounts[layer.key] || 0}
+                      {layer.label} {active ? categoryCounts[layer.key] || 0 : 'off'}
                   </Text>
                 </TouchableOpacity>
               );
@@ -3620,6 +3666,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.32,
     shadowRadius: 26,
   },
+  heroGlass: {
+    backdropFilter: 'blur(18px) saturate(145%)',
+    WebkitBackdropFilter: 'blur(18px) saturate(145%)',
+  },
   heroLauncher: {
     alignSelf: 'flex-start',
     flexDirection: 'row',
@@ -3699,14 +3749,14 @@ heroTitleMobile: {
     gap: 5,
   },
   iconButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.10)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.20)',
   },
   statusRow: {
     flexDirection: 'row',
@@ -3877,14 +3927,24 @@ heroTitleMobile: {
     alignItems: 'center',
     borderRadius: 999,
     paddingHorizontal: 14,
-    paddingVertical: 11,
-    backgroundColor: 'rgba(15,23,42,0.56)',
+    minHeight: 40,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(9,24,43,0.72)',
     borderWidth: 1,
     gap: 8,
   },
   layerChipCompact: {
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 6,
+  },
+  layerMasterChip: {
+    backgroundColor: 'rgba(9,24,43,0.88)',
+    borderColor: 'rgba(255,255,255,0.34)',
+  },
+  layerMasterChipText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '800',
   },
   legendGlyph: {
     width: 22,

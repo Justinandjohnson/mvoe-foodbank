@@ -197,6 +197,16 @@ function buildMapHtml() {
     .mcore-wrap svg{width:44px;height:54px;display:block;}
     .mbeacon-live{animation:beaconPulse 1.6s ease-in-out infinite;}
     .mshape-selected{transform:scale(1.22)!important;}
+    .marker-cluster{background:transparent!important;border:0!important;}
+    .mcluster{
+      width:48px;height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;
+      color:white;background:rgba(9,24,43,0.88);border:2px solid rgba(255,255,255,0.92);
+      box-shadow:0 6px 18px rgba(2,6,23,0.38);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;cursor:zoom-in;
+      backdrop-filter:blur(10px) saturate(135%);-webkit-backdrop-filter:blur(10px) saturate(135%);
+      transition:transform 0.14s ease-out,background-color 0.14s ease-out;
+    }
+    .mcluster:hover{transform:scale(1.06);background:rgba(15,43,73,0.94);}
     @keyframes beaconPulse{
       0%,100%{filter:drop-shadow(0 6px 10px rgba(0,0,0,0.45));}
       50%{filter:drop-shadow(0 0 14px rgba(250,204,21,0.75)) drop-shadow(0 6px 10px rgba(0,0,0,0.45));}
@@ -214,6 +224,10 @@ function buildMapHtml() {
     @keyframes locPulse{
       0%{transform:scale(0.6);opacity:0.9;}
       100%{transform:scale(2.4);opacity:0;}
+    }
+    @media (prefers-reduced-motion: reduce){
+      .mcore-wrap,.mcluster{transition:none;}
+      .mbeacon-live,.mlocation-pulse{animation:none;}
     }
     .leaflet-popup-content-wrapper{border-radius:12px;}
     .mpopup{font-family:-apple-system,Segoe UI,Arial,sans-serif;min-width:200px;max-width:260px;}
@@ -245,6 +259,7 @@ function buildMapHtml() {
   <script>
     var markerEntries = {};
     var markerPayloadById = {};
+    var markerLayer = L.layerGroup();
     var selectedId = null;
     var userMarker = null;
     var viewportInitialized = false;
@@ -270,6 +285,7 @@ function buildMapHtml() {
         attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, (c) OpenStreetMap contributors, and the GIS User Community"
       }
     ).addTo(map);
+    markerLayer.addTo(map);
 
     function escapeHtml(value) {
       var div = document.createElement("div");
@@ -329,44 +345,88 @@ function buildMapHtml() {
 
     function syncSelection(nextSelectedId) {
       selectedId = nextSelectedId || null;
-      Object.keys(markerEntries).forEach(function (key) {
-        var entry = markerEntries[key];
-        entry.instance.setIcon(makeIcon(entry.marker, key === selectedId));
-      });
+      renderMarkers();
+      if (selectedId && markerEntries[selectedId] && markerEntries[selectedId].instance) {
+        markerEntries[selectedId].instance.openPopup();
+      }
     }
 
-    function upsertMarker(marker) {
-      var markerId = String(marker.id);
-      var existing = markerEntries[markerId];
-      markerPayloadById[markerId] = marker;
-
-      if (existing) {
-        existing.marker = marker;
-        existing.instance.setLatLng([marker.lat, marker.lng]);
-        existing.instance.setIcon(makeIcon(marker, markerId === selectedId));
-        existing.instance.setPopupContent(buildPopupHtml(marker));
-        return;
-      }
-
+    function addSingleMarker(marker, markerId) {
       var instance = L.marker([marker.lat, marker.lng], {
         icon: makeIcon(marker, markerId === selectedId),
-        riseOnHover: true
-      }).addTo(map);
+        riseOnHover: true,
+        title: (marker.popup && marker.popup.typeLabel ? marker.popup.typeLabel + ': ' : '')
+          + ((marker.popup && marker.popup.name) || 'Food location')
+      }).addTo(markerLayer);
       instance.bindPopup(buildPopupHtml(marker));
       instance.on("click", function () {
         window.parent.postMessage({ type: "marker_select", marker: markerPayloadById[markerId] || marker }, "*");
       });
+      markerEntries[markerId].instance = instance;
+    }
 
-      markerEntries[markerId] = {
-        marker: marker,
-        instance: instance
-      };
+    function addClusterMarker(entries) {
+      var latitude = 0;
+      var longitude = 0;
+      entries.forEach(function (entry) {
+        latitude += entry.marker.lat;
+        longitude += entry.marker.lng;
+      });
+      latitude /= entries.length;
+      longitude /= entries.length;
+
+      var label = entries.length + " nearby food locations. Select to zoom in.";
+      var cluster = L.marker([latitude, longitude], {
+        icon: L.divIcon({
+          className: "marker-cluster",
+          html: '<div class="mcluster" title="' + label + '">' + entries.length + '</div>',
+          iconSize: [48, 48],
+          iconAnchor: [24, 24]
+        }),
+        keyboard: true,
+        title: label,
+        riseOnHover: true
+      }).addTo(markerLayer);
+
+      cluster.on("click", function () {
+        map.flyTo([latitude, longitude], Math.min((map.getZoom() || 10) + 2, 18), {
+          animate: true,
+          duration: 0.45
+        });
+      });
+    }
+
+    function renderMarkers() {
+      markerLayer.clearLayers();
+      var zoom = map.getZoom();
+      if (!Number.isFinite(zoom)) return;
+
+      var buckets = {};
+      Object.keys(markerEntries).sort().forEach(function (markerId) {
+        var entry = markerEntries[markerId];
+        entry.instance = null;
+        var point = map.project([entry.marker.lat, entry.marker.lng], zoom);
+        var bucketKey = markerId === selectedId
+          ? "selected:" + markerId
+          : Math.floor(point.x / 96) + ":" + Math.floor(point.y / 96);
+        if (!buckets[bucketKey]) buckets[bucketKey] = [];
+        buckets[bucketKey].push(entry);
+      });
+
+      Object.keys(buckets).sort().forEach(function (bucketKey) {
+        var entries = buckets[bucketKey];
+        if (entries.length === 1) {
+          var entry = entries[0];
+          addSingleMarker(entry.marker, String(entry.marker.id));
+        } else {
+          addClusterMarker(entries);
+        }
+      });
     }
 
     function removeStaleMarkers(nextIdsSet) {
       Object.keys(markerEntries).forEach(function (markerId) {
         if (nextIdsSet.has(markerId)) return;
-        map.removeLayer(markerEntries[markerId].instance);
         delete markerEntries[markerId];
         delete markerPayloadById[markerId];
       });
@@ -378,12 +438,15 @@ function buildMapHtml() {
         var marker = markers[index];
         var markerId = String(marker.id);
         nextIds.add(markerId);
-        upsertMarker(marker);
+        markerPayloadById[markerId] = marker;
+        markerEntries[markerId] = { marker: marker, instance: null };
       }
 
       removeStaleMarkers(nextIds);
-      syncSelection(selectedId);
+      renderMarkers();
     }
+
+    map.on("zoomend moveend", renderMarkers);
 
     function syncUserLocation(userLocation) {
       var hasUser = userLocation
@@ -474,8 +537,11 @@ function buildMapHtml() {
       if (!entry) return;
       syncSelection(key);
       var nextZoom = Math.max(map.getZoom() || 0, 15);
-      map.flyTo(entry.instance.getLatLng(), nextZoom, { animate: true, duration: 0.65 });
-      entry.instance.openPopup();
+      map.once("moveend", function () {
+        renderMarkers();
+        markerEntries[key] && markerEntries[key].instance && markerEntries[key].instance.openPopup();
+      });
+      map.flyTo([entry.marker.lat, entry.marker.lng], nextZoom, { animate: true, duration: 0.65 });
     }
 
     function focusUser(zoom) {
