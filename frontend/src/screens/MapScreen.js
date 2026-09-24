@@ -2166,20 +2166,23 @@ export default function MapScreen({ navigation, route }) {
           >
 <View style={[styles.heroHeader, isMobile && styles.heroHeaderMobile]}>
               <View style={[styles.heroCopy, isMobile && styles.heroCopyMobile]}>
-                <Text style={styles.heroEyebrow}>Food available</Text>
-                <Text style={[styles.heroTitle, isMobile && styles.heroTitleMobile]}>
-                  {timeMode === 'now'
+                <Text
+                  style={[styles.heroTitle, isMobile && styles.heroTitleMobile]}
+                  accessibilityRole="header"
+                >
+                  MVOE
+                </Text>
+                <Text style={styles.heroPurpose}>Find free food around you</Text>
+                <Text style={styles.compactStatusText} accessibilityLiveRegion="polite">
+                  {`${timeMode === 'now'
                     ? 'Available now'
                     : timeMode === 'upcoming'
                       ? 'Coming up in 24 hours'
                       : timeMode === 'all'
                         ? 'Browse all places'
-                        : formatReferenceTime(referenceTime)}
-                </Text>
-                <Text style={styles.compactStatusText}>
-                  {showNoVerifiedAvailability
+                        : `Available at ${formatReferenceTime(referenceTime)}`} · ${showNoVerifiedAvailability
                     ? 'Nothing verified available at this time'
-                    : `${visibleMarkers.length} of ${timeFilteredMarkers.length} results · nearby pins group automatically`}
+                    : `${visibleMarkers.length} of ${timeFilteredMarkers.length} results · nearby pins group automatically`}`}
                 </Text>
               </View>
 
@@ -3733,13 +3736,12 @@ const styles = StyleSheet.create({
   heroCopyMobile: {
     paddingRight: 0,
   },
-  heroEyebrow: {
-    fontSize: 10,
+  heroPurpose: {
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: '800',
     color: '#86EFAC',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    marginBottom: 2,
+    marginBottom: 1,
   },
   heroTitle: {
     fontSize: 16,
