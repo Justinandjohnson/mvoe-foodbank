@@ -809,6 +809,9 @@ export default function MapScreen({ navigation, route }) {
     return isMarkerAvailableAt(marker, referenceTime);
   }), [allMarkerKeys, clockTick, markerPool, referenceTime, timeMode, upcomingMarkerKeys]);
 
+  const browseAllCount = allMarkerKeys.size || feed.all.length;
+  const showNoVerifiedAvailability = timeFilteredMarkers.length === 0 && browseAllCount > 0;
+
   const visibleMarkers = useMemo(() => timeFilteredMarkers.filter((marker) => (
     layers[getMarkerCategory(marker)]
       && Number.isFinite(Number(marker.lat))
@@ -2174,7 +2177,9 @@ export default function MapScreen({ navigation, route }) {
                         : formatReferenceTime(referenceTime)}
                 </Text>
                 <Text style={styles.compactStatusText}>
-                  {visibleMarkers.length} of {timeFilteredMarkers.length} results · nearby pins group automatically
+                  {showNoVerifiedAvailability
+                    ? 'Nothing verified available at this time'
+                    : `${visibleMarkers.length} of ${timeFilteredMarkers.length} results · nearby pins group automatically`}
                 </Text>
               </View>
 
@@ -2241,6 +2246,24 @@ export default function MapScreen({ navigation, route }) {
                 ) : null}
               </View>
             </View>
+
+            {!showHeroBody && showNoVerifiedAvailability ? (
+              <View style={styles.compactEmptyState} accessibilityLiveRegion="polite">
+                <View style={styles.compactEmptyCopy}>
+                  <Ionicons name="time-outline" size={16} color="#A7F3D0" />
+                  <Text style={styles.compactEmptyText}>Try another time or see every food resource.</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.compactBrowseAllButton}
+                  onPress={() => selectTimeMode('all')}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Browse all ${browseAllCount} food resources`}
+                >
+                  <Text style={styles.compactBrowseAllText}>Browse all {browseAllCount}</Text>
+                  <Ionicons name="arrow-forward" size={14} color="#064E3B" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             {showHeroBody ? (
             <>
@@ -3734,6 +3757,48 @@ heroTitleMobile: {
     color: '#BFDBFE',
     fontSize: 11,
     fontWeight: '600',
+  },
+  compactEmptyState: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.12)',
+  },
+  compactEmptyCopy: {
+    flex: 1,
+    minWidth: 150,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  compactEmptyText: {
+    flex: 1,
+    color: '#D7EAFE',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+  },
+  compactBrowseAllButton: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    borderRadius: 999,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  compactBrowseAllText: {
+    color: '#064E3B',
+    fontSize: 11,
+    fontWeight: '800',
   },
   heroText: {
     fontSize: 13,
