@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 // Help-heatmap weighting per Austin index entry type. Events only count if within 14 days.
 const HEAT_WEIGHTS = {
@@ -40,8 +40,8 @@ function buildHeatPoints(markers) {
  * pantry:            #0EA5E9 (Blue)    glyph "P"
  * community_fridge:  #06B6D4 (Cyan)    glyph "F"
  * meal:              #8B5CF6 (Purple)  glyph "M"
- * program:           #F59E0B (Amber)   glyph "G"
- * event:             #F97316 (Orange)  glyph "E"
+ * popup:             #F97316 (Orange)  glyph "E"
+ * beacon:            #F59E0B (Amber)   glyph "N" (neighbor beacon)
  *
  * Legacy markerType values (food_bank / food_beacon / community_event, produced by the
  * live backend feed) are mapped onto this same 6-type palette so every pin on the map -
@@ -52,18 +52,33 @@ const TYPE_META = {
   pantry: { label: 'Pantry', c1: '#0EA5E9', c2: '#0369A1', glyph: 'P' },
   community_fridge: { label: 'Community Fridge', c1: '#06B6D4', c2: '#0E7490', glyph: 'F' },
   meal: { label: 'Meal', c1: '#8B5CF6', c2: '#6D28D9', glyph: 'M' },
-  program: { label: 'Program', c1: '#F59E0B', c2: '#B45309', glyph: 'G' },
-  event: { label: 'Event', c1: '#F97316', c2: '#C2410C', glyph: 'E' },
+  popup: { label: 'Pop-up / Food Event', c1: '#F97316', c2: '#C2410C', glyph: 'E' },
+  beacon: { label: 'Neighbor Beacon', c1: '#F59E0B', c2: '#B45309', glyph: 'N' },
 };
 
 function resolveDisplayType(marker) {
+  if (marker.markerType === 'food_beacon') return 'beacon';
+  const category = String(marker.category || '').toLowerCase();
+  if (category === 'food_bank') return 'food_bank';
+  if (category === 'pantry') return 'pantry';
+  if (category === 'community_fridge') return 'community_fridge';
+  if (category === 'meal') return 'meal';
+  if (category === 'pop_up' || category === 'event') return 'popup';
   if (marker.displayType && TYPE_META[marker.displayType]) return marker.displayType;
-  if (marker.markerType === 'food_beacon') return 'pantry';
-  if (marker.markerType === 'community_event') return 'event';
-  if (marker.markerType === 'food_bank') return 'food_bank';
+  if (marker.markerType === 'community_event') {
+    return ['community_meal', 'potluck', 'barbecue'].includes(marker.eventType) ? 'meal' : 'popup';
+  }
+  if (marker.markerType === 'food_bank') {
+    const type = String(marker.type || '').toLowerCase();
+    if (type.includes('fridge')) return 'community_fridge';
+    if (type.includes('pantry')) return 'pantry';
+    return 'food_bank';
+  }
   if (typeof marker.markerType === 'string' && marker.markerType.indexOf('austin_') === 0) {
     const raw = marker.markerType.slice('austin_'.length);
-    return TYPE_META[raw] ? raw : 'program';
+    if (raw === 'program') return 'pantry';
+    if (raw === 'event') return 'popup';
+    return TYPE_META[raw] ? raw : 'pantry';
   }
   return 'food_bank';
 }
@@ -155,7 +170,6 @@ function buildMapHtml() {
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
   <style>
     *{margin:0;padding:0;box-sizing:border-box;}
     html,body,#map{width:100%;height:100vh;background:#e5e3df;}
@@ -224,13 +238,6 @@ function buildMapHtml() {
       justify-content:center;cursor:pointer;font-size:20px;
     }
     .locate-btn:hover{background:#f1f5f9;}
-    .heat-btn{
-      background:white;width:44px;height:44px;border-radius:8px;
-      box-shadow:0 2px 8px rgba(0,0,0,0.35);display:flex;align-items:center;
-      justify-content:center;cursor:pointer;font-size:19px;margin-bottom:6px;
-    }
-    .heat-btn.on{background:#F97316;}
-    .heat-btn:hover{opacity:0.9;}
   </style>
 </head>
 <body>
@@ -501,36 +508,11 @@ function buildMapHtml() {
     });
     map.addControl(new LocateControl());
 
-    // Help heatmap: shows where food help is concentrated (weighted Austin index points).
-    var heatLayer = L.heatLayer([], {
-      radius: 28, blur: 20, maxZoom: 17, max: 3, minOpacity: 0.35,
-      gradient: { 0.2: "#FDE68A", 0.4: "#FBBF24", 0.6: "#F97316", 0.8: "#EA580C", 1.0: "#B91C1C" }
-    });
-    var heatOn = false;
-    var HeatControl = L.Control.extend({
-      options: { position: "bottomright" },
-      onAdd: function () {
-        var div = L.DomUtil.create("div", "heat-btn");
-        div.innerHTML = "\\uD83D\\uDD25";
-        div.title = "Toggle help heatmap";
-        L.DomEvent.disableClickPropagation(div);
-        L.DomEvent.on(div, "click", function () {
-          heatOn = !heatOn;
-          div.classList.toggle("on", heatOn);
-          if (heatOn) heatLayer.addTo(map);
-          else map.removeLayer(heatLayer);
-        });
-        return div;
-      }
-    });
-    map.addControl(new HeatControl());
-
     window.addEventListener("message", function (event) {
       if (!event.data || !event.data.type) return;
 
       if (event.data.type === "set_data") {
         applyData(event.data);
-        if (Array.isArray(event.data.heatPoints)) heatLayer.setLatLngs(event.data.heatPoints);
         var ul = event.data.userLocation;
         if (ul && typeof ul.latitude === "number" && typeof ul.longitude === "number") {
           autoCenterOnUser([ul.latitude, ul.longitude], 13);
@@ -565,7 +547,7 @@ export default function FoodBankMap({ markers = [], heatmapMarkers = [], selecte
   );
   const markerSignature = useMemo(
     () => serializedMarkers
-      .map((marker) => `${marker.id}:${marker.lat}:${marker.lng}:${marker.liveClass}`)
+      .map((marker) => `${marker.id}:${marker.lat}:${marker.lng}:${marker.displayType}:${marker.liveClass}:${marker.currentWindow?.startTime || marker.upcomingWindow?.startTime || ''}`)
       .join('|'),
     [serializedMarkers]
   );
@@ -656,7 +638,16 @@ export default function FoodBankMap({ markers = [], heatmapMarkers = [], selecte
   }, [heatPoints, heatSignature, onSelect, serializedMarkers, safeUserLocation]);
 
   if (Platform.OS !== 'web') {
-    return <View style={styles.fallback} />;
+    return (
+      <View style={styles.fallback} accessibilityRole="summary">
+        <View style={styles.fallbackCard}>
+          <Text style={styles.fallbackTitle}>Map preview is available on the web</Text>
+          <Text style={styles.fallbackText}>
+            Current availability, time filters, and the Beacon button still work here.
+          </Text>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -681,5 +672,29 @@ const styles = StyleSheet.create({
   fallback: {
     flex: 1,
     backgroundColor: '#07121f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  fallbackCard: {
+    maxWidth: 420,
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    backgroundColor: '#0F2438',
+    borderWidth: 1,
+    borderColor: '#23415D',
+  },
+  fallbackTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  fallbackText: {
+    color: '#BFDBFE',
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

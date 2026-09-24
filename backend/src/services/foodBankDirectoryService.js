@@ -34,6 +34,45 @@ const BLOCKED_SEARCH_DOMAINS = new Set([
   'maps.apple.com',
 ]);
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const DEFAULT_TIMEZONE = 'America/Chicago';
+const DAY_ALIASES = {
+  su: 'sunday',
+  sun: 'sunday',
+  sunday: 'sunday',
+  mo: 'monday',
+  mon: 'monday',
+  monday: 'monday',
+  tu: 'tuesday',
+  tue: 'tuesday',
+  tues: 'tuesday',
+  tuesday: 'tuesday',
+  we: 'wednesday',
+  wed: 'wednesday',
+  wednesday: 'wednesday',
+  th: 'thursday',
+  thu: 'thursday',
+  thur: 'thursday',
+  thurs: 'thursday',
+  thursday: 'thursday',
+  fr: 'friday',
+  fri: 'friday',
+  friday: 'friday',
+  sa: 'saturday',
+  sat: 'saturday',
+  saturday: 'saturday',
+};
+const RECURRENCE_ORDINALS = {
+  first: 1,
+  '1st': 1,
+  second: 2,
+  '2nd': 2,
+  third: 3,
+  '3rd': 3,
+  fourth: 4,
+  '4th': 4,
+  fifth: 5,
+  '5th': 5,
+};
 const ACCESS_FOOD_DAY_KEYS = {
   1: 'sunday',
   2: 'monday',
@@ -163,8 +202,10 @@ function toAmPm(value) {
 
 function dayKeyFromValue(value) {
   if (!value) return null;
-  const source = String(value).toLowerCase();
-  return DAY_KEYS.find((day) => source.includes(day)) || null;
+  const source = String(value).toLowerCase().replace(/[^a-z]/g, '');
+  return DAY_ALIASES[source]
+    || DAY_KEYS.find((day) => source.includes(day))
+    || null;
 }
 
 function normalizeHours(hours) {
@@ -188,6 +229,218 @@ function hoursToJsonString(hours) {
   if (!hours) return null;
   if (typeof hours === 'string') return hours;
   return JSON.stringify(hours);
+}
+
+function inferVenueType(candidate = {}) {
+  const haystack = [
+    candidate.venueType,
+    candidate.canonicalName,
+    candidate.description,
+    candidate.eligibilityNotes,
+    candidate.extractionReason,
+  ].filter(Boolean).join(' ').toLowerCase().replace(/[_-]+/g, ' ');
+
+  if (/community\s+fridge|free\s+fridge/.test(haystack)) return 'community_fridge';
+  if (/pop[\s-]?up/.test(haystack)) return 'pop_up';
+  if (/hot\s+meal|prepared\s+meal|community\s+meal|soup\s+kitchen|meal\s+(?:service|distribution)/.test(haystack)) {
+    return 'meal';
+  }
+  if (/pantry|food\s+shelf/.test(haystack)) return 'pantry';
+  return 'food_bank';
+}
+
+function parseDayExpression(value) {
+  const source = normalizeWhitespace(value || '').toLowerCase().replace(/[–—]/g, '-');
+  if (!source) return [];
+
+  const days = [];
+  for (const part of source.split(/\s*(?:,|&|\band\b)\s*/).filter(Boolean)) {
+    const rangeMatch = part.match(/^([a-z]+)\s*-\s*([a-z]+)$/);
+    if (rangeMatch) {
+      const startDay = dayKeyFromValue(rangeMatch[1]);
+      const endDay = dayKeyFromValue(rangeMatch[2]);
+      const startIndex = DAY_KEYS.indexOf(startDay);
+      const endIndex = DAY_KEYS.indexOf(endDay);
+      if (startIndex === -1 || endIndex === -1) continue;
+
+      let index = startIndex;
+      for (let count = 0; count < DAY_KEYS.length; count += 1) {
+        days.push(index);
+        if (index === endIndex) break;
+        index = (index + 1) % DAY_KEYS.length;
+      }
+      continue;
+    }
+
+    const day = dayKeyFromValue(part);
+    const index = DAY_KEYS.indexOf(day);
+    if (index !== -1) days.push(index);
+  }
+
+  return Array.from(new Set(days));
+}
+
+function parseTimeToMinute(value) {
+  const source = String(value || '').trim().toLowerCase().replace(/\./g, '');
+  const match = source.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  const meridiem = match[3] || null;
+  if (minute > 59) return null;
+
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    if (hour === 12) hour = 0;
+    if (meridiem === 'pm') hour += 12;
+  } else if (hour > 24 || (hour === 24 && minute !== 0)) {
+    return null;
+  }
+
+  return (hour * 60) + minute;
+}
+
+function parseRecurrenceOrdinals(value) {
+  const source = String(value || '').toLowerCase();
+  if (/every\s+other|alternate\s+week|bi[\s-]?weekly/.test(source)) {
+    return { unsupported: true, ordinals: [] };
+  }
+
+  const ordinals = [];
+  for (const [label, ordinal] of Object.entries(RECURRENCE_ORDINALS)) {
+    if (new RegExp(`\\b${label}\\b`, 'i').test(source)) ordinals.push(ordinal);
+  }
+
+  for (const qualifier of source.matchAll(/\(([^)]*)\)/g)) {
+    const text = qualifier[1];
+    if (/[ap]\.?m\.?|\d{1,2}:\d{2}/i.test(text)) continue;
+    if (!/\bweek/i.test(text) && !/^[\s\d,;&-]+$/.test(text)) continue;
+    for (const numeric of text.matchAll(/\b([1-5])(?:st|nd|rd|th)?\b/g)) {
+      ordinals.push(Number(numeric[1]));
+    }
+  }
+
+  return { unsupported: false, ordinals: Array.from(new Set(ordinals)).sort() };
+}
+
+function parseTimeRanges(value) {
+  const source = normalizeWhitespace(value || '');
+  if (!source || /\bclosed\b|by\s+appointment|call\s+(?:for|to\s+confirm)\s+hours|hours\s+vary/i.test(source)) {
+    return [];
+  }
+  if (/\b(?:open\s+)?24\s*(?:hours?|\/\s*7)\b/i.test(source)) {
+    return [{ startMinute: 0, endMinute: 1440 }];
+  }
+
+  const ranges = [];
+  const rangePattern = /(\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?)\s*(?:-|–|—|\bto\b)\s*(\d{1,2}(?::\d{2})?\s*(?:[ap]\.?m\.?)?)/gi;
+  let match;
+  while ((match = rangePattern.exec(source))) {
+    const startHasMeridiem = /[ap]\.?m\.?/i.test(match[1]);
+    const endHasMeridiem = /[ap]\.?m\.?/i.test(match[2]);
+    const bothClearly24Hour = !startHasMeridiem
+      && !endHasMeridiem
+      && match[1].includes(':')
+      && match[2].includes(':');
+    if (!(startHasMeridiem && endHasMeridiem) && !bothClearly24Hour) continue;
+
+    const startMinute = parseTimeToMinute(match[1]);
+    const endMinute = parseTimeToMinute(match[2]);
+    if (startMinute == null || endMinute == null || startMinute >= 1440 || endMinute <= startMinute) continue;
+    ranges.push({ startMinute, endMinute });
+  }
+
+  return ranges;
+}
+
+function normalizeScheduleValue(value) {
+  if (Array.isArray(value)) return value.flatMap(normalizeScheduleValue);
+  if (value && typeof value === 'object') {
+    if (value.closed === true || value.isClosed === true) return ['Closed'];
+    const start = pickFirst(value.start, value.open, value.opens, value.startTime);
+    const end = pickFirst(value.end, value.close, value.closes, value.endTime);
+    if (!start || !end) return [];
+    const qualifier = pickFirst(value.weeksOfMonth, value.recurrence, value.qualifier, value.notes);
+    return [`${start} - ${end}${qualifier ? ` (${qualifier})` : ''}`];
+  }
+  return value == null ? [] : [String(value)];
+}
+
+function isValidIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function buildAvailabilityWindows(hours, {
+  category = 'food_bank',
+  timezone = DEFAULT_TIMEZONE,
+} = {}) {
+  const normalized = normalizeHours(hours);
+  if (!normalized) return [];
+
+  const scheduleItems = [];
+  if (Array.isArray(normalized)) {
+    for (const item of normalized) {
+      if (!item || typeof item !== 'object') continue;
+      const scheduleKey = pickFirst(item.specificDate, item.date, item.dayOfWeek, item.weekday, item.day);
+      if (!scheduleKey) continue;
+      scheduleItems.push([String(scheduleKey), item]);
+    }
+  } else {
+    scheduleItems.push(...Object.entries(normalized));
+  }
+
+  const windows = [];
+  const seen = new Set();
+  for (const [scheduleKey, rawValue] of scheduleItems) {
+    const specificDate = isValidIsoDate(scheduleKey) ? scheduleKey : null;
+    const dayIndexes = specificDate ? [] : parseDayExpression(scheduleKey);
+    if (!specificDate && dayIndexes.length === 0) continue;
+
+    for (const sourceText of normalizeScheduleValue(rawValue)) {
+      const recurrence = parseRecurrenceOrdinals(sourceText);
+      if (recurrence.unsupported) continue;
+      const timeRanges = parseTimeRanges(sourceText);
+      if (timeRanges.length === 0) continue;
+
+      const ordinals = specificDate ? [null] : (recurrence.ordinals.length ? recurrence.ordinals : [null]);
+      const targetDays = specificDate ? [null] : dayIndexes;
+      for (const dayOfWeek of targetDays) {
+        for (const recurrenceOrdinal of ordinals) {
+          for (const range of timeRanges) {
+            const window = {
+              kind: specificDate ? 'date_specific' : 'recurring',
+              category,
+              dayOfWeek,
+              specificDate: specificDate ? new Date(`${specificDate}T00:00:00.000Z`) : null,
+              startMinute: range.startMinute,
+              endMinute: range.endMinute,
+              timezone: normalizeWhitespace(timezone || '') || DEFAULT_TIMEZONE,
+              recurrenceOrdinal,
+              sourceText,
+            };
+            const dedupeKey = [
+              window.kind,
+              category,
+              dayOfWeek,
+              specificDate,
+              range.startMinute,
+              range.endMinute,
+              recurrenceOrdinal,
+            ].join('|');
+            if (!seen.has(dedupeKey)) {
+              seen.add(dedupeKey);
+              windows.push(window);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return windows;
 }
 
 function formatOpeningHoursSpec(specs = []) {
@@ -755,6 +1008,9 @@ function mergeCandidateData(result, structuredData, heuristicData, aiData, regio
     latitude: Number.isFinite(aiData?.latitude) ? aiData.latitude : (Number.isFinite(structuredData?.latitude) ? structuredData.latitude : null),
     longitude: Number.isFinite(aiData?.longitude) ? aiData.longitude : (Number.isFinite(structuredData?.longitude) ? structuredData.longitude : null),
     hours: normalizeHours(aiData?.hours) || normalizeHours(structuredData?.hours) || null,
+    timezone: normalizeWhitespace(
+      pickFirst(aiData?.timezone, structuredData?.timezone, region?.config?.timezone, DEFAULT_TIMEZONE) || ''
+    ),
     eligibilityNotes: normalizeWhitespace(aiData?.eligibilityNotes || ''),
     sourceUrl: result.url,
     sourceDomain,
@@ -809,6 +1065,9 @@ async function fetchCandidatePage(result, region) {
       latitude: Number.isFinite(location.latitude) ? Number(location.latitude) : null,
       longitude: Number.isFinite(location.longitude) ? Number(location.longitude) : null,
       hours: buildAccessFoodHours(serviceSchedules),
+      timezone: normalizeWhitespace(
+        pickFirst(location.timeZone, location.timezone, providerConfig.timezone, region?.config?.timezone, DEFAULT_TIMEZONE) || ''
+      ),
       eligibilityNotes: buildAccessFoodEligibilityNotes(services, serviceSchedules),
       sourceUrl,
       sourceDomain: extractDomain(sourceUrl) || result.domain,
@@ -906,6 +1165,7 @@ function buildEntryPayload(candidate, regionId) {
     hours: hoursToJsonString(candidate.hours),
     description: candidate.description || null,
     eligibilityNotes: candidate.eligibilityNotes || null,
+    venueType: inferVenueType(candidate),
     metadata: {
       confidence: candidate.confidence,
       sourceTrust: candidate.sourceTrust,
@@ -1144,6 +1404,58 @@ async function recordSource({
       contentHash: candidate.contentHash,
       extractedData: candidate,
     },
+  });
+}
+
+async function persistDirectoryEntryAndAvailability({
+  candidate,
+  entryPayload,
+  matchedEntry,
+  matchedOrganization,
+  now,
+}) {
+  const availabilityWindows = buildAvailabilityWindows(candidate.hours, {
+    category: entryPayload.venueType,
+    timezone: candidate.timezone || DEFAULT_TIMEZONE,
+  });
+
+  return prisma.$transaction(async (tx) => {
+    const entry = !matchedEntry
+      ? await tx.foodBankDirectoryEntry.create({
+          data: {
+            ...entryPayload,
+            organizationId: matchedOrganization?.id || null,
+            reviewStatus: matchedOrganization ? 'approved' : 'pending',
+            discoveryStatus: 'indexed',
+            firstSeenAt: now,
+            lastSeenAt: now,
+            nextReviewAt: new Date(now.getTime() + REVIEW_INTERVAL_MS),
+          },
+        })
+      : await tx.foodBankDirectoryEntry.update({
+          where: { id: matchedEntry.id },
+          data: {
+            ...entryPayload,
+            organizationId: matchedEntry.organizationId || matchedOrganization?.id || null,
+            lastSeenAt: now,
+            nextReviewAt: new Date(now.getTime() + REVIEW_INTERVAL_MS),
+          },
+        });
+
+    await tx.foodBankAvailabilityWindow.deleteMany({
+      where: { entryId: entry.id },
+    });
+
+    if (availabilityWindows.length > 0) {
+      await tx.foodBankAvailabilityWindow.createMany({
+        data: availabilityWindows.map((window) => ({
+          ...window,
+          entryId: entry.id,
+        })),
+      });
+    }
+
+    return entry;
   });
 }
 
@@ -1514,30 +1826,13 @@ class FoodBankDirectoryService {
           const matchedOrganization = matchedEntry?.organization || await findMatchingOrganization(candidate);
           const now = new Date();
 
-          let entry;
-          if (!matchedEntry) {
-            entry = await prisma.foodBankDirectoryEntry.create({
-              data: {
-                ...entryPayload,
-                organizationId: matchedOrganization?.id || null,
-                reviewStatus: matchedOrganization ? 'approved' : 'pending',
-                discoveryStatus: 'indexed',
-                firstSeenAt: now,
-                lastSeenAt: now,
-                nextReviewAt: new Date(now.getTime() + REVIEW_INTERVAL_MS),
-              },
-            });
-          } else {
-            entry = await prisma.foodBankDirectoryEntry.update({
-              where: { id: matchedEntry.id },
-              data: {
-                ...entryPayload,
-                organizationId: matchedEntry.organizationId || matchedOrganization?.id || null,
-                lastSeenAt: now,
-                nextReviewAt: new Date(now.getTime() + REVIEW_INTERVAL_MS),
-              },
-            });
-          }
+          const entry = await persistDirectoryEntryAndAvailability({
+            candidate,
+            entryPayload,
+            matchedEntry,
+            matchedOrganization,
+            now,
+          });
 
           await recordSource({
             regionId: region.id,
@@ -1714,4 +2009,10 @@ class FoodBankDirectoryService {
 const foodBankDirectoryService = new FoodBankDirectoryService();
 
 export default foodBankDirectoryService;
-export { REVIEW_INTERVAL_MS, regionLabel, buildFingerprint };
+export {
+  REVIEW_INTERVAL_MS,
+  regionLabel,
+  buildFingerprint,
+  buildAvailabilityWindows,
+  inferVenueType,
+};

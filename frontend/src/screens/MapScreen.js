@@ -6,12 +6,12 @@ import {
   AppState,
   Easing,
   Image,
+  KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -51,11 +51,18 @@ const AUSTIN_TYPE_LABELS = {
 };
 
 const LAYER_OPTIONS = [
-  { key: 'foodBanks', label: 'Food Banks', icon: 'business', color: '#22C55E' },
-  { key: 'beacons', label: 'Beacons', icon: 'radio', color: '#F97316' },
-  { key: 'events', label: 'Meals', icon: 'flame', color: '#8B5CF6' },
-  { key: 'austinIndex', label: 'Community Index', icon: 'basket', color: '#0EA5E9' },
+  { key: 'foodBanks', label: 'Food banks', glyph: 'B', icon: 'business', color: '#22C55E' },
+  { key: 'pantries', label: 'Pantries', glyph: 'P', icon: 'basket', color: '#0EA5E9' },
+  { key: 'fridges', label: 'Community fridges', glyph: 'F', icon: 'snow', color: '#06B6D4' },
+  { key: 'meals', label: 'Meals', glyph: 'M', icon: 'restaurant', color: '#8B5CF6' },
+  { key: 'popups', label: 'Pop-ups / food events', glyph: 'E', icon: 'calendar', color: '#F97316' },
+  { key: 'beacons', label: 'Neighbor beacons', glyph: 'N', icon: 'radio', color: '#F59E0B' },
 ];
+
+const TIME_STEP_MS = 3 * 60 * 60 * 1000;
+const UPCOMING_WINDOW_MS = 24 * 60 * 60 * 1000;
+const LIVE_CLOCK_INTERVAL_MS = 60 * 1000;
+const LIVE_REFETCH_INTERVAL_MS = 5 * 60 * 1000;
 
 const RADIUS_OPTIONS = [10, 25, 50];
 
@@ -110,6 +117,12 @@ const VOLUNTEER_WIDGET_REFRESH_MS = 5000;
 
 function toCoordinateInput(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(6) : '';
+}
+
+function parseCoordinateInput(value) {
+  if (value == null || String(value).trim() === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function getAvailabilityKey(availableUntil) {
@@ -221,6 +234,152 @@ function formatCalendarTimeRange(startTime, endTime) {
   return `${start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 }
 
+function normalizeHoursValue(hours) {
+  if (!hours) return null;
+  if (typeof hours === 'object') return hours;
+  if (typeof hours !== 'string') return null;
+  try {
+    return JSON.parse(hours);
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseClockMinutes(value) {
+  const match = String(value || '').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2] || 0);
+  const meridiem = match[3]?.toUpperCase();
+  if (minutes > 59 || hours > (meridiem ? 12 : 23)) return null;
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+  if (meridiem === 'PM' && hours !== 12) hours += 12;
+  return (hours * 60) + minutes;
+}
+
+function isHoursOpenAt(hours, referenceDate) {
+  const normalized = normalizeHoursValue(hours);
+  if (!normalized) return null;
+  const dayKey = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][referenceDate.getDay()];
+  const dayHours = normalized[dayKey] ?? normalized[dayKey.slice(0, 3)] ?? normalized[dayKey.charAt(0).toUpperCase() + dayKey.slice(1)];
+  if (!dayHours) return false;
+  if (/24\s*hours|open\s*24/i.test(String(dayHours))) return true;
+  if (/closed/i.test(String(dayHours))) return false;
+  const currentMinutes = (referenceDate.getHours() * 60) + referenceDate.getMinutes();
+  return String(dayHours).split(',').some((range) => {
+    const parts = range.split(/\s+-\s+|\s+to\s+/i);
+    if (parts.length < 2) return false;
+    const start = parseClockMinutes(parts[0]);
+    const end = parseClockMinutes(parts[1]);
+    if (start == null || end == null) return false;
+    return end < start
+      ? currentMinutes >= start || currentMinutes <= end
+      : currentMinutes >= start && currentMinutes <= end;
+  });
+}
+
+function getMarkerCategory(marker) {
+  if (!marker) return 'pantries';
+  if (marker.markerType === 'food_beacon') return 'beacons';
+  const normalizedCategory = String(marker.category || '').toLowerCase();
+  if (normalizedCategory === 'food_bank') return 'foodBanks';
+  if (normalizedCategory === 'pantry') return 'pantries';
+  if (normalizedCategory === 'community_fridge') return 'fridges';
+  if (normalizedCategory === 'meal') return 'meals';
+  if (normalizedCategory === 'pop_up' || normalizedCategory === 'event') return 'popups';
+  if (marker.markerType === 'community_event') {
+    return marker.eventType === 'community_meal' || marker.eventType === 'potluck' || marker.eventType === 'barbecue'
+      ? 'meals'
+      : 'popups';
+  }
+
+  const type = String(marker.austinType || marker.displayType || marker.type || marker.markerType || '').toLowerCase();
+  if (type.includes('fridge')) return 'fridges';
+  if (type === 'meal' || type.includes('meal')) return 'meals';
+  if (type === 'event' || type.includes('event') || type.includes('distribution') || type.includes('pop')) return 'popups';
+  if (type.includes('pantry') || type === 'program') return 'pantries';
+  return 'foodBanks';
+}
+
+function getMarkerEventRange(marker) {
+  const window = marker.currentWindow || marker.upcomingWindow || marker.nextWindow;
+  const startValue = window?.startTime || marker.startTime || marker.event_date || marker.eventDate;
+  const startMs = startValue ? Date.parse(startValue) : NaN;
+  const endMs = Date.parse(window?.endTime || marker.endTime || '');
+  if (!Number.isFinite(startMs)) return null;
+  return {
+    startMs,
+    endMs: Number.isFinite(endMs) ? endMs : startMs + (2 * 60 * 60 * 1000),
+  };
+}
+
+function isMarkerAvailableAt(marker, referenceDate) {
+  const referenceMs = referenceDate.getTime();
+  const category = getMarkerCategory(marker);
+  const currentStart = Date.parse(marker.currentWindow?.startTime || '');
+  const currentEnd = Date.parse(marker.currentWindow?.endTime || '');
+  if (Number.isFinite(currentStart)) {
+    return referenceMs >= currentStart && (!Number.isFinite(currentEnd) || referenceMs < currentEnd);
+  }
+  if (category === 'beacons') {
+    const startMs = Date.parse(marker.availableFrom || marker.createdAt || '');
+    const endMs = Date.parse(marker.availableUntil || '');
+    if (Number.isFinite(startMs) && referenceMs < startMs) return false;
+    if (Number.isFinite(endMs) && referenceMs > endMs) return false;
+    return marker.isActive === true || (Number.isFinite(startMs) && Number.isFinite(endMs));
+  }
+
+  if (category === 'meals' || category === 'popups') {
+    const range = getMarkerEventRange(marker);
+    if (range) return referenceMs >= range.startMs && referenceMs <= range.endMs;
+  }
+
+  const hoursState = isHoursOpenAt(marker.hours, referenceDate);
+  if (hoursState != null) return hoursState;
+  const nearRealNow = Math.abs(referenceMs - Date.now()) < (2 * 60 * 1000);
+  return nearRealNow && marker.openNow === true;
+}
+
+function isMarkerUpcoming(marker, referenceDate) {
+  const startMs = referenceDate.getTime();
+  const endMs = startMs + UPCOMING_WINDOW_MS;
+  const range = getMarkerEventRange(marker);
+  if (range) return range.endMs >= startMs && range.startMs <= endMs;
+
+  const beaconStart = Date.parse(marker.availableFrom || marker.createdAt || '');
+  const beaconEnd = Date.parse(marker.availableUntil || '');
+  if (getMarkerCategory(marker) === 'beacons' && Number.isFinite(beaconEnd)) {
+    return beaconEnd >= startMs && (!Number.isFinite(beaconStart) || beaconStart <= endMs);
+  }
+
+  for (let offset = 0; offset <= UPCOMING_WINDOW_MS; offset += 30 * 60 * 1000) {
+    if (isMarkerAvailableAt(marker, new Date(startMs + offset))) return true;
+  }
+  return false;
+}
+
+function findNextAvailability(marker, afterDate) {
+  const range = getMarkerEventRange(marker);
+  if (range && range.endMs >= afterDate.getTime()) {
+    return new Date(Math.max(range.startMs, afterDate.getTime()));
+  }
+  for (let offset = 0; offset <= 7 * UPCOMING_WINDOW_MS; offset += 30 * 60 * 1000) {
+    const candidate = new Date(afterDate.getTime() + offset);
+    if (isMarkerAvailableAt(marker, candidate)) return candidate;
+  }
+  return null;
+}
+
+function formatReferenceTime(value) {
+  return value.toLocaleString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function getOpenStateLabel(marker) {
   if (marker.openNow === true) return 'Open now';
   if (marker.openNow === false) return 'Closed now';
@@ -238,12 +397,8 @@ const AUSTIN_TYPE_COLORS = {
 
 function getMarkerTypeLabel(marker) {
   if (!marker) return '';
-  if (marker.source === 'austinIndex') {
-    return AUSTIN_TYPE_LABELS[marker.austinType] || 'Community listing';
-  }
-  if (marker.markerType === 'food_bank') return 'Food bank';
-  if (marker.markerType === 'food_beacon') return 'Food beacon';
-  return 'Meal event';
+  const category = getMarkerCategory(marker);
+  return LAYER_OPTIONS.find((option) => option.key === category)?.label || 'Food resource';
 }
 
 function getAvailabilityStatus(marker) {
@@ -460,7 +615,7 @@ function isAuthRequiredError(error) {
 
 export default function MapScreen({ navigation, route }) {
   const { isAuthenticated, isStaffMember } = useAuth();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isMobile = windowWidth < 768;
   const handledRouteIntentRef = useRef('');
   const beaconComposerAnim = useRef(new Animated.Value(0)).current;
@@ -476,10 +631,14 @@ export default function MapScreen({ navigation, route }) {
   const [statusNotice, setStatusNotice] = useState('');
   const [hoursReviewCount, setHoursReviewCount] = useState(0);
   const [radiusMiles, setRadiusMiles] = useState(25);
+  const [timeMode, setTimeMode] = useState('now');
+  const [referenceTime, setReferenceTime] = useState(() => new Date());
+  const [clockTick, setClockTick] = useState(() => Date.now());
   const [userLocation, setUserLocation] = useState(null);
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
   const [mapFocusRequest, setMapFocusRequest] = useState(null);
   const [beaconEditorVisible, setBeaconEditorVisible] = useState(false);
+  const [beaconMoreDetailsVisible, setBeaconMoreDetailsVisible] = useState(false);
   const [eventEditorVisible, setEventEditorVisible] = useState(false);
   const [volunteerEditorVisible, setVolunteerEditorVisible] = useState(false);
   const [calendarPanelVisible, setCalendarPanelVisible] = useState(false);
@@ -489,15 +648,19 @@ export default function MapScreen({ navigation, route }) {
   const showHeroBody = !anyComposerOpen && (!isMobile || !heroCollapsed);
   const [layers, setLayers] = useState({
     foodBanks: true,
+    pantries: true,
+    fridges: true,
+    meals: true,
+    popups: true,
     beacons: true,
-    events: true,
-    austinIndex: true,
   });
   const [feed, setFeed] = useState({
     foodBanks: [],
     beacons: [],
     events: [],
     austinIndex: [],
+    upcoming: [],
+    all: [],
     userBeacon: null,
     generatedAt: null,
   });
@@ -534,6 +697,7 @@ export default function MapScreen({ navigation, route }) {
   const volunteerRefreshTimerRef = useRef(null);
   const volunteerWidgetVisibleRef = useRef(false);
   const volunteerWidgetRefreshRef = useRef(null);
+  const liveRefreshInFlightRef = useRef(false);
   volunteerWidgetRefreshRef.current = loadVolunteerWidgetData;
 
   const canReviewHours = isStaffMember();
@@ -543,6 +707,10 @@ export default function MapScreen({ navigation, route }) {
     if (windowWidth >= 860) return 400;
     return Math.max(296, windowWidth - 28);
   }, [windowWidth]);
+  const compactBeaconHeight = useMemo(() => Math.max(
+    360,
+    Math.min(isMobile ? 660 : 700, windowHeight - (isMobile ? 106 : 142))
+  ), [isMobile, windowHeight]);
   const compactEventWidth = useMemo(() => {
     if (windowWidth >= 1440) return 468;
     if (windowWidth >= 1100) return 430;
@@ -613,63 +781,111 @@ export default function MapScreen({ navigation, route }) {
     ],
   }), [volunteerComposerAnim]);
 
-  const markerPool = useMemo(
-    () => [...feed.foodBanks, ...feed.beacons, ...feed.events, ...feed.austinIndex],
-    [feed]
-  );
+  const markerPool = useMemo(() => {
+    const byId = new Map();
+    [...feed.foodBanks, ...feed.beacons, ...feed.events, ...feed.austinIndex, ...feed.upcoming, ...feed.all]
+      .forEach((marker) => {
+        if (marker?.id) byId.set(`${marker.markerType || marker.source || 'resource'}:${marker.id}`, marker);
+      });
+    return [...byId.values()];
+  }, [feed]);
 
-  const visibleMarkers = useMemo(() => {
-    const markers = [];
+  const upcomingMarkerKeys = useMemo(() => new Set(feed.upcoming.map((marker) => (
+    `${marker.markerType || marker.source || 'resource'}:${marker.id}`
+  ))), [feed.upcoming]);
 
-    if (layers.foodBanks) markers.push(...feed.foodBanks);
-    if (layers.beacons) markers.push(...feed.beacons);
-    if (layers.events) markers.push(...feed.events);
-    if (layers.austinIndex) markers.push(...feed.austinIndex);
+  const allMarkerKeys = useMemo(() => new Set(feed.all.map((marker) => (
+    `${marker.markerType || marker.source || 'resource'}:${marker.id}`
+  ))), [feed.all]);
 
-    return markers.filter(
-      (marker) => typeof marker.lat === 'number' && typeof marker.lng === 'number'
-    );
-  }, [feed, layers]);
+  const timeFilteredMarkers = useMemo(() => markerPool.filter((marker) => {
+    const markerKey = `${marker.markerType || marker.source || 'resource'}:${marker.id}`;
+    if (timeMode === 'all') return allMarkerKeys.size === 0 || allMarkerKeys.has(markerKey);
+    if (timeMode === 'upcoming') {
+      if (upcomingMarkerKeys.size > 0) {
+        return upcomingMarkerKeys.has(markerKey);
+      }
+      return isMarkerUpcoming(marker, referenceTime) && !isMarkerAvailableAt(marker, referenceTime);
+    }
+    return isMarkerAvailableAt(marker, referenceTime);
+  }), [allMarkerKeys, clockTick, markerPool, referenceTime, timeMode, upcomingMarkerKeys]);
+
+  const visibleMarkers = useMemo(() => timeFilteredMarkers.filter((marker) => (
+    layers[getMarkerCategory(marker)]
+      && Number.isFinite(Number(marker.lat))
+      && Number.isFinite(Number(marker.lng))
+  )), [layers, timeFilteredMarkers]);
+
+  const categoryCounts = useMemo(() => LAYER_OPTIONS.reduce((counts, option) => ({
+    ...counts,
+    [option.key]: timeFilteredMarkers.filter((marker) => getMarkerCategory(marker) === option.key).length,
+  }), {}), [timeFilteredMarkers]);
 
   const selectedMarker = useMemo(
     () => markerPool.find((marker) => marker.id === selectedMarkerId) || null,
     [markerPool, selectedMarkerId]
   );
 
-  const summaryMetrics = useMemo(() => ([
-    {
-      label: 'Open now',
-      value: feed.foodBanks.filter((item) => item.openNow === true).length.toString(),
-    },
-    {
-      label: 'Live beacons',
-      value: feed.beacons.filter((item) => item.isActive).length.toString(),
-    },
-    {
-      label: 'Meals coming',
-      value: feed.events.length.toString(),
-    },
-  ]), [feed]);
   const liveCalendarEvents = useMemo(() => {
     const now = Date.now();
-    const twoHoursAgo = now - (2 * 60 * 60 * 1000);
+    const windowEnd = now + UPCOMING_WINDOW_MS;
 
-    return [...feed.events]
+    return [...feed.upcoming]
       .filter((event) => event?.id)
       .map((event) => {
-        const startMs = Date.parse(event.startTime || event.eventDate || '');
-        const endMs = Date.parse(event.endTime || '');
+        const startMs = Date.parse(event.upcomingWindow?.startTime || event.startTime || event.eventDate || '');
+        const endMs = Date.parse(event.upcomingWindow?.endTime || event.endTime || '');
         return { event, startMs, endMs };
       })
       .filter(({ startMs, endMs }) => {
         if (!Number.isFinite(startMs)) return false;
-        if (Number.isFinite(endMs)) return endMs >= now;
-        return startMs >= twoHoursAgo;
+        if (Number.isFinite(endMs)) return endMs >= now && startMs <= windowEnd;
+        return startMs >= now && startMs <= windowEnd;
       })
       .sort((left, right) => left.startMs - right.startMs)
       .map(({ event }) => event)
-      .slice(0, 3);
-  }, [feed.events]);
+      .slice(0, 6);
+  }, [clockTick, feed.upcoming]);
+
+  const selectedAvailabilityLabel = useMemo(() => {
+    if (!selectedMarker) return '';
+    if (isMarkerAvailableAt(selectedMarker, referenceTime)) {
+      return timeMode === 'now' ? 'Available now' : `Available at ${formatReferenceTime(referenceTime)}`;
+    }
+    const next = findNextAvailability(selectedMarker, referenceTime);
+    return next ? `Next: ${formatReferenceTime(next)}` : 'Schedule unknown';
+  }, [clockTick, referenceTime, selectedMarker, timeMode]);
+
+  const beaconLocationStatus = useMemo(() => {
+    const latitude = parseCoordinateInput(beaconDraft.latitude);
+    const longitude = parseCoordinateInput(beaconDraft.longitude);
+    const hasCoordinates = latitude != null && longitude != null;
+    const label = beaconDraft.locationLabel.trim();
+    if (hasCoordinates) {
+      return {
+        ready: true,
+        title: label || 'Coordinates captured',
+        detail: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
+      };
+    }
+    if (label) {
+      return {
+        ready: false,
+        title: 'Address ready to geotag',
+        detail: 'Coordinates will be resolved when you publish.',
+      };
+    }
+    return {
+      ready: false,
+      title: 'Location needed',
+      detail: 'Use your current location or enter another pickup spot.',
+    };
+  }, [beaconDraft.latitude, beaconDraft.locationLabel, beaconDraft.longitude]);
+
+  const beaconAvailabilityUntil = useMemo(() => {
+    const hours = AVAILABILITY_OPTIONS.find((option) => option.key === beaconDraft.availableWindow)?.hours || 6;
+    return formatDateTime(new Date(clockTick + (hours * 60 * 60 * 1000)));
+  }, [beaconDraft.availableWindow, clockTick]);
   const volunteerSignupQrUrl = useMemo(
     () => (volunteerSignupShareUrl
       ? `https://quickchart.io/qr?text=${encodeURIComponent(volunteerSignupShareUrl)}&size=180`
@@ -734,12 +950,58 @@ export default function MapScreen({ navigation, route }) {
 
   useEffect(() => {
     const initialize = async () => {
-      await loadLiveFeed(null, { showSpinner: true, radiusOverride: 25 });
+      const now = new Date();
+      setReferenceTime(now);
+      await loadLiveFeed(null, { showSpinner: true, radiusOverride: 25, referenceOverride: now });
       await locateUser(false, { focusMap: true });
     };
 
     initialize();
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let lastRefetch = Date.now();
+
+    const refreshForCurrentTime = async (force = false) => {
+      if (disposed || timeMode !== 'now' || liveRefreshInFlightRef.current) return;
+      const now = new Date();
+      setReferenceTime(now);
+      setClockTick(now.getTime());
+      if (!force && now.getTime() - lastRefetch < LIVE_REFETCH_INTERVAL_MS) return;
+      liveRefreshInFlightRef.current = true;
+      lastRefetch = now.getTime();
+      try {
+        await loadLiveFeed(userLocation, { referenceOverride: now });
+      } finally {
+        liveRefreshInFlightRef.current = false;
+      }
+    };
+
+    const timer = setInterval(() => refreshForCurrentTime(false), LIVE_CLOCK_INTERVAL_MS);
+    const handleAppStateChange = (nextState) => {
+      if (nextState === 'active') refreshForCurrentTime(true);
+    };
+    const handleVisibilityChange = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        refreshForCurrentTime(true);
+      }
+    };
+    const appStateSubscription = AppState.addEventListener?.('change', handleAppStateChange);
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+      appStateSubscription?.remove?.();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      liveRefreshInFlightRef.current = false;
+    };
+  }, [radiusMiles, timeMode, userLocation]);
 
   useEffect(() => {
     if (!beaconEditorVisible) {
@@ -879,18 +1141,22 @@ export default function MapScreen({ navigation, route }) {
       shouldClearParams = true;
     }
 
-    if (params.focusLayer && LAYER_OPTIONS.some((item) => item.key === params.focusLayer)) {
-      setLayers({
-        foodBanks: params.focusLayer === 'foodBanks',
-        beacons: params.focusLayer === 'beacons',
-        events: params.focusLayer === 'events',
-      });
+    const focusLayerKeys = params.focusLayer === 'events'
+      ? ['meals', 'popups']
+      : params.focusLayer === 'austinIndex'
+        ? ['foodBanks', 'pantries', 'fridges', 'meals', 'popups']
+        : [params.focusLayer];
+    if (params.focusLayer && focusLayerKeys.some((key) => LAYER_OPTIONS.some((item) => item.key === key))) {
+      setLayers(LAYER_OPTIONS.reduce((next, item) => ({
+        ...next,
+        [item.key]: focusLayerKeys.includes(item.key),
+      }), {}));
       nextParams.focusLayer = undefined;
       shouldClearParams = true;
     }
 
     if (params.openCalendarPanel) {
-      setLayers((current) => ({ ...current, events: true }));
+      setLayers((current) => ({ ...current, meals: true, popups: true }));
       setCalendarPanelVisible(true);
       nextParams.openCalendarPanel = undefined;
       shouldClearParams = true;
@@ -909,7 +1175,7 @@ export default function MapScreen({ navigation, route }) {
   }, [navigation, route?.params]);
 
   async function loadLiveFeed(locationOverride = userLocation, options = {}) {
-    const { showSpinner = false, radiusOverride } = options;
+    const { showSpinner = false, radiusOverride, referenceOverride } = options;
     const nextRadius = radiusOverride ?? radiusMiles;
 
     if (showSpinner) {
@@ -920,6 +1186,10 @@ export default function MapScreen({ navigation, route }) {
 
     try {
       const params = { radius: nextRadius };
+      const requestTime = referenceOverride || referenceTime;
+      if (requestTime instanceof Date && !Number.isNaN(requestTime.getTime())) {
+        params.referenceTime = requestTime.toISOString();
+      }
       if (locationOverride?.latitude && locationOverride?.longitude) {
         params.latitude = locationOverride.latitude;
         params.longitude = locationOverride.longitude;
@@ -938,8 +1208,12 @@ export default function MapScreen({ navigation, route }) {
         beacons: nextFeed.beacons || [],
         events: nextFeed.events || [],
         austinIndex: nextFeed.austinIndex || [],
+        upcoming: nextFeed.upcoming || [],
+        all: Array.isArray(nextFeed.all)
+          ? nextFeed.all
+          : Object.values(nextFeed.all || {}).flat().filter(Boolean),
         userBeacon: nextFeed.userBeacon || null,
-        generatedAt: nextFeed.generatedAt || new Date().toISOString(),
+        generatedAt: nextFeed.generatedAt || nextFeed.referenceTime || new Date().toISOString(),
       });
       setDataMode('live');
       setStatusNotice('');
@@ -991,6 +1265,23 @@ export default function MapScreen({ navigation, route }) {
       ...current,
       [key]: !current[key],
     }));
+  }
+
+  async function selectTimeMode(nextMode) {
+    const nextReference = nextMode === 'now' || nextMode === 'upcoming' ? new Date() : referenceTime;
+    setTimeMode(nextMode);
+    setReferenceTime(nextReference);
+    setClockTick(Date.now());
+    await loadLiveFeed(userLocation, { referenceOverride: nextReference });
+  }
+
+  async function stepReferenceTime(direction) {
+    const base = timeMode === 'now' ? new Date() : referenceTime;
+    const nextReference = new Date(base.getTime() + (direction * TIME_STEP_MS));
+    setTimeMode('selected');
+    setReferenceTime(nextReference);
+    setClockTick(Date.now());
+    await loadLiveFeed(userLocation, { referenceOverride: nextReference });
   }
 
   async function handleRadiusChange(value) {
@@ -1488,29 +1779,24 @@ export default function MapScreen({ navigation, route }) {
     hideVolunteerComposer({ immediate: true });
     setCalendarPanelVisible(false);
     setMarkerDetailVisible(false);
+    setBeaconMoreDetailsVisible(false);
     showBeaconComposer();
     setSelectedMarkerId(null);
     setMapFocusRequest(null);
     setLayers((current) => ({ ...current, beacons: true }));
 
-    const hasCoordinates = Number.isFinite(Number(beaconDraft.latitude)) && Number.isFinite(Number(beaconDraft.longitude));
+    const latitude = parseCoordinateInput(beaconDraft.latitude);
+    const longitude = parseCoordinateInput(beaconDraft.longitude);
+    const hasCoordinates = latitude != null && longitude != null;
     const hasAddress = beaconDraft.locationLabel.trim().length > 0;
 
     if (!hasCoordinates && !hasAddress) {
       await handleUseLocationForBeacon();
-    }
-  }
-
-  async function handleBeaconStateChange(nextValue) {
-    setBeaconDraft((current) => ({ ...current, isActive: nextValue }));
-
-    if (!nextValue) return;
-
-    const hasCoordinates = Number.isFinite(Number(beaconDraft.latitude)) && Number.isFinite(Number(beaconDraft.longitude));
-    const hasAddress = beaconDraft.locationLabel.trim().length > 0;
-
-    if (!hasCoordinates && !hasAddress) {
-      await handleUseLocationForBeacon();
+    } else if (hasCoordinates && !hasAddress) {
+      const label = await reverseGeocode(latitude, longitude);
+      if (label) {
+        setBeaconDraft((current) => ({ ...current, locationLabel: label }));
+      }
     }
   }
 
@@ -1526,7 +1812,7 @@ export default function MapScreen({ navigation, route }) {
     showEventComposer();
     setSelectedMarkerId(null);
     setMapFocusRequest(null);
-    setLayers((current) => ({ ...current, events: true }));
+    setLayers((current) => ({ ...current, meals: true, popups: true }));
 
     const seededLatitude = Number(initialDraft?.latitude);
     const seededLongitude = Number(initialDraft?.longitude);
@@ -1646,7 +1932,7 @@ export default function MapScreen({ navigation, route }) {
       });
 
       const createdEventId = response.data?.event?.id || null;
-      setLayers((current) => ({ ...current, events: true }));
+      setLayers((current) => ({ ...current, meals: true, popups: true }));
       await loadLiveFeed(userLocation);
       await hideEventComposer();
 
@@ -1668,11 +1954,11 @@ export default function MapScreen({ navigation, route }) {
     }
   }
 
-  async function handleBeaconPhotoPick() {
+  async function handleBeaconPhotoPick(source = 'library') {
     setBeaconPhotoUploading(true);
 
     try {
-      const uploaded = await pickAndUploadImage();
+      const uploaded = await pickAndUploadImage(source);
       if (uploaded) {
         // Store the path — publicPhotoUrl turns it into a URL when reading back.
         setBeaconDraft((current) => ({ ...current, photoUrl: uploaded.path }));
@@ -1684,13 +1970,17 @@ export default function MapScreen({ navigation, route }) {
     }
   }
 
+  function handleBeaconPhotoRemove() {
+    setBeaconDraft((current) => ({ ...current, photoUrl: null }));
+  }
+
   async function handleSaveBeacon(forceLiveState = beaconDraft.isActive) {
     // Anyone can post a pantry — no account required. Guests are tracked by
     // session id so they can still edit or take down their own pin.
 
     let nextLocationLabel = beaconDraft.locationLabel.trim();
-    let latitude = Number(beaconDraft.latitude);
-    let longitude = Number(beaconDraft.longitude);
+    let latitude = parseCoordinateInput(beaconDraft.latitude);
+    let longitude = parseCoordinateInput(beaconDraft.longitude);
 
     if ((!Number.isFinite(latitude) || !Number.isFinite(longitude)) && nextLocationLabel) {
       const resolved = await geocodeAddress(nextLocationLabel);
@@ -1771,7 +2061,7 @@ export default function MapScreen({ navigation, route }) {
         }
 
         if (nextIsActive) {
-          setStatusNotice('Beacon published. Look for the pulsing orange marker on the map.');
+          setStatusNotice('Beacon published. Look for the pulsing N marker on the map.');
         } else {
           setStatusNotice('Beacon draft saved. Press Publish beacon when you are ready to show it on the map.');
         }
@@ -1818,7 +2108,8 @@ export default function MapScreen({ navigation, route }) {
     hideEventComposer({ immediate: true });
     hideVolunteerComposer({ immediate: true });
     setMarkerDetailVisible(false);
-    setLayers((current) => ({ ...current, events: true }));
+    setTimeMode('all');
+    setLayers((current) => ({ ...current, [getMarkerCategory(event)]: true }));
     setSelectedMarkerId(event.id);
     setMapFocusRequest({ type: 'marker', id: event.id, nonce: Date.now() });
   }
@@ -1828,7 +2119,7 @@ export default function MapScreen({ navigation, route }) {
     <View style={styles.container}>
       <FoodBankMap
         markers={visibleMarkers}
-        heatmapMarkers={feed.austinIndex}
+        heatmapMarkers={visibleMarkers}
         selectedId={selectedMarkerId}
         focusRequest={mapFocusRequest}
         onSelect={(marker) => {
@@ -1851,18 +2142,7 @@ export default function MapScreen({ navigation, route }) {
 
       <View pointerEvents="box-none" style={styles.overlay}>
         <View style={styles.topStack}>
-          {anyComposerOpen ? null : isMobile && heroCollapsed ? (
-            <TouchableOpacity
-              style={styles.heroLauncher}
-              onPress={() => setHeroCollapsed(false)}
-              accessibilityRole="button"
-              accessibilityLabel="Open live map panel"
-            >
-              <Ionicons name="map" size={16} color="#34D399" />
-              <Text style={styles.heroLauncherText}>MVOE live map</Text>
-              <Ionicons name="chevron-down" size={16} color="#CBD5E1" />
-            </TouchableOpacity>
-          ) : (
+          {anyComposerOpen ? null : (
           <LinearGradient
             colors={['rgba(15,23,42,0.92)', 'rgba(10,37,64,0.76)']}
             start={{ x: 0, y: 0 }}
@@ -1871,13 +2151,17 @@ export default function MapScreen({ navigation, route }) {
           >
 <View style={[styles.heroHeader, isMobile && styles.heroHeaderMobile]}>
               <View style={[styles.heroCopy, isMobile && styles.heroCopyMobile]}>
-                <Text style={styles.heroEyebrow}>MVOE live map</Text>
-                <Text style={[styles.heroTitle, isMobile && styles.heroTitleMobile]}>Food access, neighbor beacons, and public meals in one view.</Text>
-                {showHeroBody && !isMobile ? (
-                  <Text style={styles.heroText}>
-                    Keep the map as the working surface. Beacons, verified hours, and meal gatherings all land here.
-                  </Text>
-                ) : null}
+                <Text style={styles.heroEyebrow}>Food available</Text>
+                <Text style={[styles.heroTitle, isMobile && styles.heroTitleMobile]}>
+                  {timeMode === 'now'
+                    ? 'Available now'
+                    : timeMode === 'upcoming'
+                      ? 'Coming up in 24 hours'
+                      : timeMode === 'all'
+                        ? 'Browse all places'
+                        : formatReferenceTime(referenceTime)}
+                </Text>
+                <Text style={styles.compactStatusText}>{visibleMarkers.length} shown on the map</Text>
               </View>
 
               <View style={[styles.heroActions, isMobile && styles.heroActionsMobile]}>
@@ -1896,7 +2180,12 @@ export default function MapScreen({ navigation, route }) {
                   </TouchableOpacity>
                 ) : null}
 
-                <TouchableOpacity style={styles.iconButton} onPress={handleRefresh}>
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={handleRefresh}
+                  accessibilityRole="button"
+                  accessibilityLabel="Refresh food availability"
+                >
                   {refreshing ? (
                     <ActivityIndicator size="small" color="white" />
                   ) : (
@@ -1904,7 +2193,12 @@ export default function MapScreen({ navigation, route }) {
                   )}
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.iconButton} onPress={() => locateUser(true)}>
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={() => locateUser(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Find my location"
+                >
                   {locating ? (
                     <ActivityIndicator size="small" color="white" />
                   ) : (
@@ -1934,68 +2228,85 @@ export default function MapScreen({ navigation, route }) {
 
             {showHeroBody ? (
             <>
-            <View style={styles.statusRow}>
-              <View style={[
-                styles.statusBadge,
-                dataMode === 'live' ? styles.statusBadgeLive : styles.statusBadgeFallback,
-              ]}>
-                <Text style={styles.statusBadgeText}>
-                  {dataMode === 'live' ? 'Live feed' : 'Refresh issue'}
-                </Text>
-              </View>
-              <Text style={styles.statusMeta}>Updated {formatTimestamp(feed.generatedAt)}</Text>
-              {canReviewHours && hoursReviewCount > 0 ? (
-                <View style={styles.reviewBadge}>
-                  <Ionicons name="time" size={12} color="#FCD34D" />
-                  <Text style={styles.reviewBadgeText}>{hoursReviewCount} hours checks due</Text>
-                </View>
-              ) : null}
+            <View style={styles.timeNavigator}>
+              <TouchableOpacity
+                style={styles.timeStepButton}
+                onPress={() => stepReferenceTime(-1)}
+                accessibilityRole="button"
+                accessibilityLabel="Show three hours earlier"
+              >
+                <Ionicons name="chevron-back" size={16} color="white" />
+                <Text style={styles.timeStepText}>3h</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.timeModeButton, timeMode === 'now' && styles.timeModeButtonActive]}
+                onPress={() => selectTimeMode('now')}
+                accessibilityRole="button"
+                accessibilityState={{ selected: timeMode === 'now' }}
+              >
+                <Text style={[styles.timeModeText, timeMode === 'now' && styles.timeModeTextActive]}>Now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.timeStepButton}
+                onPress={() => stepReferenceTime(1)}
+                accessibilityRole="button"
+                accessibilityLabel="Show three hours later"
+              >
+                <Text style={styles.timeStepText}>3h</Text>
+                <Ionicons name="chevron-forward" size={16} color="white" />
+              </TouchableOpacity>
             </View>
-
-            <View style={styles.metricRow}>
-              {summaryMetrics.map((item) => (
-                <View key={item.label} style={styles.metricBlock}>
-                  <Text style={styles.metricValue}>{item.value}</Text>
-                  <Text style={styles.metricLabel}>{item.label}</Text>
-                </View>
-              ))}
+            <View style={styles.browseModeRow}>
+              <TouchableOpacity
+                style={[styles.browseModeButton, timeMode === 'upcoming' && styles.browseModeButtonActive]}
+                onPress={() => selectTimeMode('upcoming')}
+                accessibilityRole="button"
+                accessibilityState={{ selected: timeMode === 'upcoming' }}
+              >
+                <Text style={[styles.browseModeText, timeMode === 'upcoming' && styles.browseModeTextActive]}>Upcoming 24h</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.browseModeButton, timeMode === 'all' && styles.browseModeButtonActive]}
+                onPress={() => selectTimeMode('all')}
+                accessibilityRole="button"
+                accessibilityState={{ selected: timeMode === 'all' }}
+              >
+                <Text style={[styles.browseModeText, timeMode === 'all' && styles.browseModeTextActive]}>Browse all</Text>
+              </TouchableOpacity>
+              <Text style={styles.statusMeta}>
+                {dataMode === 'live' ? `Updated ${formatTimestamp(feed.generatedAt)}` : 'Refresh issue'}
+              </Text>
             </View>
-
             {statusNotice ? <Text style={styles.noticeText}>{statusNotice}</Text> : null}
-
-            <View style={styles.quickRow}>
-              <TouchableOpacity
-                style={styles.quickAction}
-                onPress={handleBeaconQuickToggle}
-                disabled={beaconSaving}
-              >
-                <Ionicons
-                  name={feed.userBeacon?.isActive ? 'radio' : 'radio-outline'}
-                  size={16}
-                  color="#FDE68A"
-                />
-                <Text style={styles.quickActionText}>
-                  {feed.userBeacon?.isActive ? 'Beacon live' : 'Start beacon'}
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.quickAction} onPress={() => openEventComposer()}>
-                <Ionicons name="flame" size={16} color="#C4B5FD" />
-                <Text style={styles.quickActionText}>Plan meal event</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.quickAction}
-                onPress={() => openVolunteerWidget()}
-              >
-                <Ionicons name="people" size={16} color="#A7F3D0" />
-                <Text style={styles.quickActionText}>Volunteer ops</Text>
-              </TouchableOpacity>
-            </View>
             </>
             ) : null}
           </LinearGradient>
           )}
+
+          {!anyComposerOpen && !showHeroBody ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+              {LAYER_OPTIONS.map((layer) => {
+                const active = layers[layer.key];
+                return (
+                  <TouchableOpacity
+                    key={layer.key}
+                    style={[styles.layerChip, styles.layerChipCompact, active && styles.layerChipActive]}
+                    onPress={() => updateLayer(layer.key)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${layer.glyph} means ${layer.label}; ${categoryCounts[layer.key] || 0} shown`}
+                    accessibilityState={{ selected: active }}
+                  >
+                    <View style={[styles.legendGlyph, { backgroundColor: layer.color }]}>
+                      <Text style={styles.legendGlyphText}>{layer.glyph}</Text>
+                    </View>
+                    <Text style={[styles.layerChipText, active && styles.layerChipTextActive]}>
+                      {layer.label} {categoryCounts[layer.key] || 0}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : null}
 
           {showHeroBody ? (
           <>
@@ -2005,14 +2316,6 @@ export default function MapScreen({ navigation, route }) {
             contentContainerStyle={styles.chipRow}
           >
             {LAYER_OPTIONS.map((layer) => {
-              const count = layer.key === 'foodBanks'
-                ? feed.foodBanks.length
-                : layer.key === 'beacons'
-                  ? feed.beacons.length
-                  : layer.key === 'austinIndex'
-                    ? feed.austinIndex.length
-                    : feed.events.length;
-
               const active = layers[layer.key];
 
               return (
@@ -2024,14 +2327,15 @@ export default function MapScreen({ navigation, route }) {
                     { borderColor: active ? `${layer.color}66` : 'rgba(255,255,255,0.18)' },
                   ]}
                   onPress={() => updateLayer(layer.key)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${layer.glyph} means ${layer.label}; ${categoryCounts[layer.key] || 0} shown`}
+                  accessibilityState={{ selected: active }}
                 >
-                  <Ionicons
-                    name={layer.icon}
-                    size={15}
-                    color={active ? layer.color : '#CBD5E1'}
-                  />
+                  <View style={[styles.legendGlyph, { backgroundColor: layer.color }]}>
+                    <Text style={styles.legendGlyphText}>{layer.glyph}</Text>
+                  </View>
                   <Text style={[styles.layerChipText, active && styles.layerChipTextActive]}>
-                    {layer.label} {count}
+                    {layer.label} {categoryCounts[layer.key] || 0}
                   </Text>
                 </TouchableOpacity>
               );
@@ -2071,7 +2375,7 @@ export default function MapScreen({ navigation, route }) {
                 calendarPanelVisible && styles.calendarDockCardActive,
               ]}
               onPress={() => {
-                setLayers((current) => ({ ...current, events: true }));
+                setLayers((current) => ({ ...current, meals: true, popups: true }));
                 setCalendarPanelVisible((current) => !current);
               }}
             >
@@ -2104,8 +2408,8 @@ export default function MapScreen({ navigation, route }) {
                 <Text style={styles.calendarTitle}>Live calendar</Text>
                 <Text style={styles.calendarSubtitle}>
                   {liveCalendarEvents.length > 0
-                    ? 'Meals synced to this map area.'
-                    : 'No upcoming public meals in this radius yet.'}
+                    ? 'Meals and food events in the next 24 hours.'
+                    : 'Nothing scheduled in the next 24 hours.'}
                 </Text>
               </View>
 
@@ -2137,29 +2441,29 @@ export default function MapScreen({ navigation, route }) {
                     >
                       <View style={styles.calendarDateBadge}>
                         <Text style={styles.calendarDateDay}>
-                          {new Date(event.eventDate || event.startTime).getDate()}
+                          {new Date(event.upcomingWindow?.startTime || event.eventDate || event.startTime).getDate()}
                         </Text>
                         <Text style={styles.calendarDateMonth}>
-                          {new Date(event.eventDate || event.startTime).toLocaleDateString([], { month: 'short' })}
+                          {new Date(event.upcomingWindow?.startTime || event.eventDate || event.startTime).toLocaleDateString([], { month: 'short' })}
                         </Text>
                       </View>
                       <View style={styles.calendarEventCopy}>
                         <Text numberOfLines={1} style={styles.calendarEventTitle}>{event.name}</Text>
                         <Text numberOfLines={1} style={styles.calendarEventMeta}>
-                          {formatCalendarDay(event.eventDate || event.startTime)} • {formatCalendarTimeRange(event.startTime, event.endTime)}
+                          {formatCalendarDay(event.upcomingWindow?.startTime || event.eventDate || event.startTime)} • {formatCalendarTimeRange(event.upcomingWindow?.startTime || event.startTime, event.upcomingWindow?.endTime || event.endTime)}
                         </Text>
                         <Text numberOfLines={1} style={styles.calendarEventMeta}>
-                          {event.location || event.address || 'Address pending'} • {event.targetServings || 0} servings
+                          {event.location || event.address || 'Address pending'} • {getMarkerTypeLabel(event)}
                         </Text>
                       </View>
                     </TouchableOpacity>
 
                     <TouchableOpacity
                       style={styles.calendarEventAction}
-                      onPress={() => navigation.navigate('EventDetail', { eventId: event.id })}
+                      onPress={() => focusCalendarEvent(event)}
                     >
-                      <Ionicons name="open-outline" size={14} color="#0F172A" />
-                      <Text style={styles.calendarEventActionText}>Open</Text>
+                      <Ionicons name="locate-outline" size={14} color="#0F172A" />
+                      <Text style={styles.calendarEventActionText}>Show</Text>
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -2167,7 +2471,7 @@ export default function MapScreen({ navigation, route }) {
             ) : (
               <View style={styles.calendarEmptyState}>
                 <Ionicons name="calendar-outline" size={15} color="#64748B" />
-                <Text style={styles.calendarEmptyText}>Publish your first meal event from this map.</Text>
+                <Text style={styles.calendarEmptyText}>Nothing scheduled in the next 24 hours.</Text>
               </View>
             )}
           </View>
@@ -2178,16 +2482,28 @@ export default function MapScreen({ navigation, route }) {
           <TouchableOpacity
             style={[styles.fab, styles.primaryFab]}
             onPress={openBeaconComposer}
+            accessibilityRole="button"
+            accessibilityLabel="Share food with a neighbor beacon"
           >
             <Ionicons name="radio" size={18} color="white" />
             <Text style={styles.fabText}>Beacon</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.fab} onPress={() => openEventComposer()}>
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => openEventComposer()}
+            accessibilityRole="button"
+            accessibilityLabel="Create a meal event"
+          >
             <Ionicons name="flame" size={18} color="#E2E8F0" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.fab} onPress={() => openVolunteerWidget()}>
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => openVolunteerWidget()}
+            accessibilityRole="button"
+            accessibilityLabel="Open volunteer operations"
+          >
             <Ionicons name="people" size={18} color="#E2E8F0" />
           </TouchableOpacity>
 
@@ -2241,7 +2557,7 @@ export default function MapScreen({ navigation, route }) {
               </View>
 
               <View style={styles.statChip}>
-                <Text style={styles.statChipLabel}>{getAvailabilityStatus(selectedMarker)}</Text>
+                <Text style={styles.statChipLabel}>{selectedAvailabilityLabel}</Text>
               </View>
             </TouchableOpacity>
 
@@ -2322,7 +2638,7 @@ export default function MapScreen({ navigation, route }) {
 
             <View style={styles.statChipRow}>
               <View style={styles.statChip}>
-                <Text style={styles.statChipLabel}>{getAvailabilityStatus(selectedMarker)}</Text>
+                <Text style={styles.statChipLabel}>{selectedAvailabilityLabel}</Text>
               </View>
 
               {selectedMarker.markerType === 'food_bank' && selectedMarker.todaysHours ? (
@@ -2432,12 +2748,19 @@ export default function MapScreen({ navigation, route }) {
           <Animated.View
             style={[
               styles.beaconComposer,
+              isMobile && styles.beaconComposerMobile,
               beaconComposerAnimatedStyle,
               {
                 width: compactBeaconWidth,
+                height: compactBeaconHeight,
               },
             ]}
           >
+            <KeyboardAvoidingView
+              style={styles.beaconKeyboardAvoider}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 74 : 0}
+            >
             <LinearGradient
               colors={['rgba(255,255,255,1)', 'rgba(241,245,249,1)']}
               start={{ x: 0, y: 0 }}
@@ -2450,67 +2773,144 @@ export default function MapScreen({ navigation, route }) {
                     <Ionicons name="radio" size={12} color="#0F766E" />
                     <Text style={styles.beaconComposerBadgeText}>Beacon</Text>
                   </View>
-                  <Text style={styles.beaconComposerTitle}>Share food nearby</Text>
+                  <Text style={styles.beaconComposerTitle}>Share food</Text>
                   <Text style={styles.beaconComposerSubtitle}>
-                    Add the food, confirm the spot, and send it live.
+                    Add a photo, confirm the pickup spot, and publish.
                   </Text>
                 </View>
 
                 <TouchableOpacity
                   style={styles.closeButton}
                   onPress={() => hideBeaconComposer()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close beacon editor"
                 >
                   <Ionicons name="close" size={18} color="#475569" />
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.beaconComposerContent}>
-                <View style={styles.beaconLiveRow}>
-                  <View style={styles.beaconLiveCopy}>
-                    <Text style={styles.inlineCardLabel}>Live on the map</Text>
-                    <Text style={styles.inlineCardValue}>
-                      {beaconDraft.isActive ? 'Turns on when you submit.' : 'Keep it hidden until you are ready.'}
-                    </Text>
-                  </View>
-
-                  <Switch
-                    value={beaconDraft.isActive}
-                    onValueChange={handleBeaconStateChange}
-                    trackColor={{ false: '#CBD5E1', true: '#86EFAC' }}
-                    thumbColor="#ffffff"
-                  />
-                </View>
-
+              <ScrollView
+                style={styles.beaconComposerScroll}
+                contentContainerStyle={styles.beaconComposerContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
                 <View style={styles.compactInputGrid}>
                   <View style={[styles.inputGroup, styles.compactPrimaryField]}>
-                    <Text style={styles.inputLabel}>Food</Text>
-                    <TextInput
-                      style={[styles.input, styles.inputCompact]}
-                      value={beaconDraft.foodTypes}
-                      onChangeText={(text) => setBeaconDraft((current) => ({ ...current, foodTypes: text }))}
-                      placeholder="Sandwiches, canned goods, hot plates"
-                      placeholderTextColor="#94A3B8"
-                    />
+                    <Text style={styles.inputLabel}>Photo</Text>
+                    {beaconDraft.photoUrl ? (
+                      <View style={styles.beaconPhotoPreviewWrap}>
+                        <Image
+                          source={{ uri: publicPhotoUrl(beaconDraft.photoUrl) }}
+                          style={styles.beaconPhotoPreview}
+                          accessibilityLabel="Food photo preview"
+                        />
+                        <TouchableOpacity
+                          style={styles.photoRemoveButton}
+                          onPress={handleBeaconPhotoRemove}
+                          accessibilityRole="button"
+                          accessibilityLabel="Remove food photo"
+                        >
+                          <Ionicons name="trash-outline" size={15} color="#991B1B" />
+                          <Text style={styles.photoRemoveText}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                    <View style={styles.photoActionRow}>
+                      <TouchableOpacity
+                        style={[styles.photoPrimaryButton, beaconPhotoUploading && styles.buttonDisabled]}
+                        onPress={() => handleBeaconPhotoPick(isMobile || Platform.OS !== 'web' ? 'camera' : 'library')}
+                        disabled={beaconPhotoUploading}
+                        accessibilityRole="button"
+                        accessibilityLabel={isMobile || Platform.OS !== 'web' ? 'Take food photo' : 'Add food photo'}
+                      >
+                        {beaconPhotoUploading ? (
+                          <ActivityIndicator size="small" color="white" />
+                        ) : (
+                          <Ionicons name={isMobile || Platform.OS !== 'web' ? 'camera' : 'image-outline'} size={17} color="white" />
+                        )}
+                        <Text style={styles.photoPrimaryText}>
+                          {beaconPhotoUploading
+                            ? 'Uploading...'
+                            : isMobile || Platform.OS !== 'web'
+                              ? (beaconDraft.photoUrl ? 'Retake photo' : 'Take photo')
+                              : (beaconDraft.photoUrl ? 'Replace photo' : 'Add photo')}
+                        </Text>
+                      </TouchableOpacity>
+                      {isMobile || Platform.OS !== 'web' ? (
+                        <TouchableOpacity
+                          style={styles.photoSecondaryButton}
+                          onPress={() => handleBeaconPhotoPick('library')}
+                          disabled={beaconPhotoUploading}
+                          accessibilityRole="button"
+                          accessibilityLabel="Choose an existing food photo"
+                        >
+                          <Ionicons name="images-outline" size={16} color="#0F172A" />
+                          <Text style={styles.photoSecondaryText}>Choose existing</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
                   </View>
 
                   <View style={[styles.inputGroup, styles.compactAddressField]}>
+                    <Text style={styles.inputLabel}>Brief description</Text>
+                    <TextInput
+                      style={[styles.input, styles.textAreaCompact]}
+                      multiline
+                      maxLength={240}
+                      value={beaconDraft.description}
+                      onChangeText={(text) => setBeaconDraft((current) => ({ ...current, description: text }))}
+                      placeholder="What food is available, and where should someone pick it up?"
+                      placeholderTextColor="#94A3B8"
+                      accessibilityLabel="Brief food and pickup description"
+                    />
+                  </View>
+
+                  <View style={[styles.inputGroup, styles.compactFullField]}>
                     <View style={styles.inlineLabelRow}>
-                      <Text style={styles.inputLabel}>Address</Text>
-                      <TouchableOpacity style={styles.miniActionButton} onPress={handleUseLocationForBeacon}>
-                        <Ionicons name="locate" size={14} color="#0F172A" />
-                        <Text style={styles.miniActionText}>My location</Text>
+                      <Text style={styles.inputLabel}>Pickup location</Text>
+                      <TouchableOpacity
+                        style={styles.geotagButton}
+                        onPress={handleUseLocationForBeacon}
+                        disabled={locating}
+                        accessibilityRole="button"
+                        accessibilityLabel="Use my current location for this beacon"
+                      >
+                        {locating ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Ionicons name="locate" size={15} color="#FFFFFF" />
+                        )}
+                        <Text style={styles.geotagButtonText}>Use my location</Text>
                       </TouchableOpacity>
+                    </View>
+                    <View style={[styles.locationStatusCard, beaconLocationStatus.ready && styles.locationStatusCardReady]}>
+                      <Ionicons
+                        name={beaconLocationStatus.ready ? 'checkmark-circle' : 'location-outline'}
+                        size={17}
+                        color={beaconLocationStatus.ready ? '#047857' : '#64748B'}
+                      />
+                      <View style={styles.locationStatusCopy}>
+                        <Text style={styles.locationStatusTitle} numberOfLines={1}>{beaconLocationStatus.title}</Text>
+                        <Text style={styles.locationStatusDetail} numberOfLines={2}>{beaconLocationStatus.detail}</Text>
+                      </View>
                     </View>
                     <View style={styles.autocompleteWrap}>
                       <TextInput
                         style={[styles.input, styles.inputCompact]}
                         value={beaconDraft.locationLabel}
                         onChangeText={(text) => {
-                          setBeaconDraft((current) => ({ ...current, locationLabel: text }));
+                          setBeaconDraft((current) => ({
+                            ...current,
+                            locationLabel: text,
+                            latitude: '',
+                            longitude: '',
+                          }));
                           searchAddress(text);
                         }}
-                        placeholder="Address or landmark"
+                        placeholder="Choose or type an address / landmark"
                         placeholderTextColor="#94A3B8"
+                        accessibilityLabel="Pickup address or landmark"
                       />
                       {addressSearching ? (
                         <ActivityIndicator size="small" color="#0F766E" style={styles.autocompleteSpinner} />
@@ -2522,15 +2922,13 @@ export default function MapScreen({ navigation, route }) {
                               key={i}
                               style={[styles.suggestionItem, i < addressSuggestions.length - 1 && styles.suggestionItemBorder]}
                               onPress={() => selectAddressSuggestion(s)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Use ${s.shortLabel || s.label} as pickup location`}
                             >
                               <Ionicons name="location-outline" size={14} color="#0F766E" />
                               <View style={styles.suggestionText}>
-                                <Text style={styles.suggestionPrimary} numberOfLines={1}>
-                                  {s.shortLabel || s.label}
-                                </Text>
-                                <Text style={styles.suggestionSecondary} numberOfLines={1}>
-                                  {s.label}
-                                </Text>
+                                <Text style={styles.suggestionPrimary} numberOfLines={1}>{s.shortLabel || s.label}</Text>
+                                <Text style={styles.suggestionSecondary} numberOfLines={1}>{s.label}</Text>
                               </View>
                             </TouchableOpacity>
                           ))}
@@ -2540,48 +2938,59 @@ export default function MapScreen({ navigation, route }) {
                   </View>
 
                   <View style={[styles.inputGroup, styles.compactFullField]}>
-                    <Text style={styles.inputLabel}>Pickup note</Text>
-                    <TextInput
-                      style={[styles.input, styles.textAreaCompact]}
-                      multiline
-                      value={beaconDraft.description}
-                      onChangeText={(text) => setBeaconDraft((current) => ({ ...current, description: text }))}
-                      placeholder="Front porch cooler, side gate, ask for blue tent"
-                      placeholderTextColor="#94A3B8"
-                    />
-                  </View>
-
-                  <View style={[styles.inputGroup, styles.compactFullField]}>
-                    <Text style={styles.inputLabel}>Photo</Text>
-                    <TouchableOpacity
-                      style={[styles.optionCard, styles.optionCardCompact]}
-                      onPress={handleBeaconPhotoPick}
-                      disabled={beaconPhotoUploading}
-                    >
-                      <Text style={styles.optionTitle}>
-                        {beaconPhotoUploading
-                          ? 'Uploading...'
-                          : beaconDraft.photoUrl
-                            ? 'Replace photo'
-                            : 'Add a photo of the food'}
-                      </Text>
-                    </TouchableOpacity>
-                    {beaconDraft.photoUrl ? (
-                      <Image
-                        source={{ uri: publicPhotoUrl(beaconDraft.photoUrl) }}
-                        style={styles.beaconPhotoPreview}
-                      />
-                    ) : null}
+                    <Text style={styles.inputLabel}>Available for</Text>
+                    <View style={styles.availabilityRowCompact}>
+                      {AVAILABILITY_OPTIONS.map((option) => {
+                        const active = beaconDraft.availableWindow === option.key;
+                        return (
+                          <TouchableOpacity
+                            key={option.key}
+                            style={[styles.availabilityChip, styles.availabilityChipCompact, active && styles.availabilityChipActive]}
+                            onPress={() => setBeaconDraft((current) => ({ ...current, availableWindow: option.key }))}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            accessibilityLabel={`Keep beacon available for ${option.label}`}
+                          >
+                            <Text style={[styles.availabilityText, active && styles.availabilityTextActive]}>{option.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <Text style={styles.availabilityUntilText}>Available until {beaconAvailabilityUntil}</Text>
                   </View>
                 </View>
 
-                <View style={styles.metaControlRowCompact}>
-                  <View style={styles.metaControlBlockCompact}>
-                    <Text style={styles.inputLabel}>Amount</Text>
+                <TouchableOpacity
+                  style={styles.moreDetailsToggle}
+                  onPress={() => setBeaconMoreDetailsVisible((current) => !current)}
+                  accessibilityRole="button"
+                  accessibilityLabel={beaconMoreDetailsVisible ? 'Hide optional beacon details' : 'Show optional beacon details'}
+                  accessibilityState={{ expanded: beaconMoreDetailsVisible }}
+                >
+                  <View style={styles.moreDetailsToggleCopy}>
+                    <Text style={styles.moreDetailsToggleTitle}>More details</Text>
+                    <Text style={styles.moreDetailsToggleHint}>Optional food label and amount</Text>
+                  </View>
+                  <Ionicons name={beaconMoreDetailsVisible ? 'chevron-up' : 'chevron-down'} size={17} color="#475569" />
+                </TouchableOpacity>
+
+                {beaconMoreDetailsVisible ? (
+                  <View style={styles.moreDetailsPanel}>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>Food label (optional)</Text>
+                      <TextInput
+                        style={[styles.input, styles.inputCompact]}
+                        value={beaconDraft.foodTypes}
+                        onChangeText={(text) => setBeaconDraft((current) => ({ ...current, foodTypes: text }))}
+                        placeholder="Sandwiches, produce, pantry goods"
+                        placeholderTextColor="#94A3B8"
+                        accessibilityLabel="Optional food type label"
+                      />
+                    </View>
+                    <Text style={styles.inputLabel}>Amount (optional)</Text>
                     <View style={styles.optionGridCompact}>
                       {QUANTITY_OPTIONS.map((option) => {
                         const active = beaconDraft.quantityLevel === option.key;
-
                         return (
                           <TouchableOpacity
                             key={option.key}
@@ -2591,84 +3000,52 @@ export default function MapScreen({ navigation, route }) {
                               active && { borderColor: option.color, backgroundColor: `${option.color}12` },
                             ]}
                             onPress={() => setBeaconDraft((current) => ({ ...current, quantityLevel: option.key }))}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            accessibilityLabel={`Amount ${option.label}`}
                           >
-                            <Text style={[styles.optionTitle, active && { color: option.color }]}>
-                              {option.label}
-                            </Text>
+                            <Text style={[styles.optionTitle, active && { color: option.color }]}>{option.label}</Text>
                           </TouchableOpacity>
                         );
                       })}
                     </View>
                   </View>
-
-                  <View style={styles.metaControlBlockCompact}>
-                    <Text style={styles.inputLabel}>Visible for</Text>
-                    <View style={styles.availabilityRowCompact}>
-                      {AVAILABILITY_OPTIONS.map((option) => {
-                        const active = beaconDraft.availableWindow === option.key;
-
-                        return (
-                          <TouchableOpacity
-                            key={option.key}
-                            style={[styles.availabilityChip, styles.availabilityChipCompact, active && styles.availabilityChipActive]}
-                            onPress={() => setBeaconDraft((current) => ({ ...current, availableWindow: option.key }))}
-                          >
-                            <Text style={[styles.availabilityText, active && styles.availabilityTextActive]}>
-                              {option.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </View>
-                </View>
-              </View>
+                ) : null}
+              </ScrollView>
 
               <View style={styles.beaconComposerFooter}>
-                <Text style={styles.beaconFooterHint}>
-                  {beaconDraft.isActive
-                    ? 'Ready to update this beacon live.'
-                    : 'Draft stays hidden until you publish it.'}
-                </Text>
+                <Text style={styles.beaconFooterHint}>Publishes now • available until {beaconAvailabilityUntil}</Text>
 
-                <View style={styles.beaconComposerActions}>
+                <View style={[styles.beaconComposerActions, isMobile && styles.beaconComposerActionsMobile]}>
                   <TouchableOpacity
-                    style={styles.secondaryActionButton}
+                    style={[styles.secondaryActionButton, styles.beaconCloseAction]}
                     onPress={() => hideBeaconComposer()}
                     disabled={beaconSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close without publishing"
                   >
                     <Ionicons name="close-circle-outline" size={16} color="#0F172A" />
-                    <Text style={styles.secondaryActionText}>Cancel</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.secondaryActionButton}
-                    onPress={() => handleSaveBeacon(false)}
-                    disabled={beaconSaving}
-                  >
-                    {beaconSaving && !beaconDraft.isActive ? (
-                      <ActivityIndicator size="small" color="#0F172A" />
-                    ) : (
-                      <Ionicons name="document-text-outline" size={16} color="#0F172A" />
-                    )}
-                    <Text style={styles.secondaryActionText}>Save draft</Text>
+                    <Text style={styles.secondaryActionText}>Close</Text>
                   </TouchableOpacity>
 
                   <TouchableOpacity
                     style={[styles.primaryActionButton, styles.beaconGoLiveButton]}
                     onPress={() => handleSaveBeacon(true)}
                     disabled={beaconSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Publish food beacon now"
                   >
                     {beaconSaving ? (
                       <ActivityIndicator size="small" color="white" />
                     ) : (
                       <Ionicons name="radio" size={16} color="white" />
                     )}
-                    <Text style={styles.primaryActionText}>Publish beacon</Text>
+                    <Text style={styles.primaryActionText}>Publish</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </LinearGradient>
+            </KeyboardAvoidingView>
           </Animated.View>
         ) : null}
 
@@ -3233,9 +3610,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   heroCard: {
-    borderRadius: 28,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.18)',
     shadowColor: '#020617',
@@ -3268,13 +3645,13 @@ const styles = StyleSheet.create({
   heroHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 8,
+    alignItems: 'center',
+    gap: 10,
   },
   heroHeaderMobile: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   heroCopy: {
     flex: 1,
@@ -3284,24 +3661,29 @@ const styles = StyleSheet.create({
     paddingRight: 0,
   },
   heroEyebrow: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
     color: '#86EFAC',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    marginBottom: 6,
+    marginBottom: 2,
   },
   heroTitle: {
-    fontSize: 19,
-    lineHeight: 23,
+    fontSize: 16,
+    lineHeight: 19,
     fontWeight: '800',
     color: 'white',
-    marginBottom: 6,
+    marginBottom: 1,
   },
 heroTitleMobile: {
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 18,
     marginBottom: 0,
+  },
+  compactStatusText: {
+    color: '#BFDBFE',
+    fontSize: 11,
+    fontWeight: '600',
   },
   heroText: {
     fontSize: 13,
@@ -3314,11 +3696,12 @@ heroTitleMobile: {
   },
   heroActionsMobile: {
     justifyContent: 'flex-end',
+    gap: 5,
   },
   iconButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.12)',
@@ -3416,6 +3799,75 @@ heroTitleMobile: {
     fontSize: 12,
     fontWeight: '700',
   },
+  timeNavigator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 8,
+  },
+  timeStepButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+  },
+  timeStepText: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  timeModeButton: {
+    minHeight: 34,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+  },
+  timeModeButtonActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  timeModeText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  timeModeTextActive: {
+    color: '#047857',
+  },
+  browseModeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 7,
+  },
+  browseModeButton: {
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  browseModeButtonActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  browseModeText: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  browseModeTextActive: {
+    color: '#0F172A',
+  },
   chipRow: {
     paddingRight: 8,
     gap: 8,
@@ -3429,6 +3881,24 @@ heroTitleMobile: {
     backgroundColor: 'rgba(15,23,42,0.56)',
     borderWidth: 1,
     gap: 8,
+  },
+  layerChipCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  legendGlyph: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.86)',
+  },
+  legendGlyphText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: '900',
   },
   layerChipActive: {
     backgroundColor: 'rgba(255,255,255,0.92)',
@@ -3919,7 +4389,18 @@ heroTitleMobile: {
     shadowRadius: 28,
     overflow: 'hidden',
   },
+  beaconComposerMobile: {
+    left: 0,
+    right: 0,
+    bottom: 82,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  beaconKeyboardAvoider: {
+    flex: 1,
+  },
   beaconComposerGlass: {
+    flex: 1,
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 12,
@@ -3967,6 +4448,11 @@ heroTitleMobile: {
   },
   beaconComposerContent: {
     gap: 8,
+    paddingBottom: 18,
+  },
+  beaconComposerScroll: {
+    flex: 1,
+    minHeight: 0,
   },
   authCard: {
     backgroundColor: '#F8FAFC',
@@ -4153,10 +4639,120 @@ heroTitleMobile: {
   },
   beaconPhotoPreview: {
     width: '100%',
-    height: 140,
+    height: 108,
     borderRadius: 12,
-    marginTop: 8,
     resizeMode: 'cover',
+  },
+  geotagButton: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    borderRadius: 999,
+    backgroundColor: '#0F766E',
+  },
+  geotagButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  locationStatusCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    marginBottom: 8,
+    borderRadius: 14,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  locationStatusCardReady: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  locationStatusCopy: {
+    flex: 1,
+  },
+  locationStatusTitle: {
+    color: '#0F172A',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  locationStatusDetail: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+  },
+  beaconPhotoPreviewWrap: {
+    position: 'relative',
+    marginBottom: 8,
+  },
+  photoRemoveButton: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  photoRemoveText: {
+    color: '#991B1B',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  photoActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  photoPrimaryButton: {
+    flexGrow: 1,
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 13,
+    borderRadius: 14,
+    backgroundColor: '#0F766E',
+  },
+  photoPrimaryText: {
+    color: 'white',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  photoSecondaryButton: {
+    flexGrow: 1,
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  photoSecondaryText: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   optionTitle: {
     color: '#0F172A',
@@ -4171,6 +4767,10 @@ heroTitleMobile: {
   availabilityRow: {
     flexDirection: 'row',
     gap: 10,
+  },
+  availabilityRowCompact: {
+    flexDirection: 'row',
+    gap: 6,
   },
   metaControlRowCompact: {
     gap: 8,
@@ -4208,6 +4808,47 @@ heroTitleMobile: {
   availabilityTextActive: {
     color: 'white',
   },
+  availabilityUntilText: {
+    color: '#475569',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  moreDetailsToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  moreDetailsToggleCopy: {
+    flex: 1,
+  },
+  moreDetailsToggleTitle: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  moreDetailsToggleHint: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  moreDetailsPanel: {
+    gap: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
   beaconComposerFooter: {
     borderTopWidth: 1,
     borderTopColor: 'rgba(148,163,184,0.18)',
@@ -4225,6 +4866,12 @@ heroTitleMobile: {
     flexDirection: 'row',
     gap: 10,
     marginTop: 2,
+  },
+  beaconComposerActionsMobile: {
+    flexWrap: 'nowrap',
+  },
+  beaconCloseAction: {
+    minWidth: 92,
   },
   beaconGoLiveButton: {
     flex: 1,

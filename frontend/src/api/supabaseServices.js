@@ -5,6 +5,10 @@ import {
   buildBeaconMapItem,
   buildFoodBankMapItem,
   buildCommunityEventMapItem,
+  collectChunkedPages,
+  evaluateAvailabilityWindows,
+  normalizeResourceCategory,
+  partitionLiveFeedItems,
   withinRadius,
 } from '../utils/liveMap';
 
@@ -36,6 +40,7 @@ function toFoodBank(row) {
   return {
     id: row.id,
     name: row.name,
+    type: row.type,
     description: row.description,
     address: row.address,
     city: row.city,
@@ -46,6 +51,7 @@ function toFoodBank(row) {
     latitude: row.latitude,
     longitude: row.longitude,
     hours: row.hours,
+    timezone: row.timezone || row.metadata?.timezone || 'America/Chicago',
     updatedAt: row.updated_at,
   };
 }
@@ -53,13 +59,17 @@ function toFoodBank(row) {
 function toEvent(row) {
   return {
     id: row.id,
-    title: row.title,
+    eventName: row.event_name || row.title,
+    eventType: row.event_type,
     description: row.description,
-    locationLabel: row.location_label,
+    eventDate: row.event_date,
+    location: row.location || row.location_label,
     latitude: row.latitude,
     longitude: row.longitude,
-    startsAt: row.starts_at,
-    endsAt: row.ends_at,
+    startTime: row.start_time || row.starts_at,
+    endTime: row.end_time || row.ends_at,
+    targetServings: row.target_servings,
+    isPublic: row.is_public,
     status: row.status,
   };
 }
@@ -71,10 +81,11 @@ function formatDateOnly(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function toAustinIndexMarker(row) {
+function toAustinIndexMarker(row, availabilityRows, referenceDate) {
   const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   const sourceId = metadata.austinId || row.fingerprint || row.id;
   const type = row.venue_type || metadata.venueType || 'program';
+  const fallbackCategory = normalizeResourceCategory(type, `${row.canonical_name || ''} ${row.hours || ''}`);
   const latitude = Number(row.latitude);
   const longitude = Number(row.longitude);
 
@@ -82,11 +93,15 @@ function toAustinIndexMarker(row) {
     return null;
   }
 
+  const availability = evaluateAvailabilityWindows(availabilityRows, referenceDate, fallbackCategory);
+  const category = availability.currentWindow?.category || availability.nextWindow?.category || fallbackCategory;
+
   return {
     id: `austin-${sourceId}`,
     source: 'austinIndex',
-    markerType: `austin_${type}`,
+    markerType: `austin_${category}`,
     austinType: type,
+    category,
     name: row.canonical_name || 'Untitled location',
     lat: latitude,
     lng: longitude,
@@ -97,6 +112,7 @@ function toAustinIndexMarker(row) {
     eligibility: row.eligibility_notes || '',
     event_date: metadata.eventDate || null,
     last_verified: formatDateOnly(row.last_verified_at || metadata.lastVerified),
+    ...availability,
   };
 }
 
@@ -111,15 +127,10 @@ async function fetchLiveBeacons() {
 
   if (error) throw error;
 
-  const now = new Date();
-  // Belt and braces — RLS already hides expired pins, but a stale pin on the
-  // map is the one failure that makes people stop trusting the app.
-  return data
-    .map(toBeacon)
-    .filter((b) => !b.availableUntil || new Date(b.availableUntil) > now);
+  return (data || []).map(toBeacon);
 }
 
-async function fetchAustinIndexMarkers() {
+async function fetchAustinIndexRows() {
   const { data, error } = await supabase
     .from('food_bank_directory_entries')
     .select(`
@@ -147,50 +158,97 @@ async function fetchAustinIndexMarkers() {
 
   if (error) throw error;
 
-  return (data || [])
-    .map(toAustinIndexMarker)
-    .filter(Boolean);
+  return data || [];
+}
+
+function isMissingAvailabilityTable(error) {
+  const message = `${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+  return ['42p01', 'pgrst205'].includes(String(error?.code || '').toLowerCase())
+    || (message.includes('food_bank_availability_windows')
+      && (message.includes('does not exist') || message.includes('schema cache')));
+}
+
+async function fetchAvailabilityWindows(entryIds) {
+  try {
+    return await collectChunkedPages(entryIds, async (idChunk, from, to) => (
+      supabase
+        .from('food_bank_availability_windows')
+        .select('*')
+        .in('entry_id', idChunk)
+        .order('id', { ascending: true })
+        .range(from, to)
+    ));
+  } catch (error) {
+    // Deploys can briefly serve the new client before the migration reaches
+    // PostgREST's schema cache. Zero rows remain unknown, never open.
+    if (isMissingAvailabilityTable(error)) return [];
+    throw error;
+  }
+}
+
+function resolveReferenceInstant(params) {
+  const supplied = params.referenceTime ?? params.referenceDate ?? params.at;
+  if (supplied == null) return new Date();
+  const reference = new Date(supplied);
+  if (Number.isNaN(reference.getTime())) throw new TypeError('referenceTime must be a valid date or ISO timestamp');
+  return reference;
 }
 
 export const mapService = {
   async getLiveFeed(params = {}) {
     const { latitude, longitude, radius } = params;
+    const referenceDate = resolveReferenceInstant(params);
 
     const [beaconRows, orgRes, eventRes, austinIndexRows, mine] = await Promise.all([
       fetchLiveBeacons(),
       supabase.from('organizations').select('*').eq('is_active', true).limit(500),
       supabase.from('community_events').select('*').limit(200),
-      fetchAustinIndexMarkers(),
+      fetchAustinIndexRows(),
       foodBeaconService.getMineRaw(),
     ]);
 
     if (orgRes.error) throw orgRes.error;
     if (eventRes.error) throw eventRes.error;
 
-    const now = new Date();
-    let foodBanks = orgRes.data.map(toFoodBank).map((f) => buildFoodBankMapItem(f, now));
-    let beacons = beaconRows.map((b) => buildBeaconMapItem(b, now));
-    let events = eventRes.data.map(toEvent).map((e) => buildCommunityEventMapItem(e, now));
-    let austinIndex = austinIndexRows;
+    const availabilityRows = await fetchAvailabilityWindows(austinIndexRows.map((row) => row.id));
+
+    const windowsByEntry = new Map();
+    availabilityRows.forEach((window) => {
+      const rows = windowsByEntry.get(window.entry_id) || [];
+      rows.push(window);
+      windowsByEntry.set(window.entry_id, rows);
+    });
+
+    let allFoodBanks = (orgRes.data || []).map(toFoodBank).map((f) => buildFoodBankMapItem(f, referenceDate));
+    let allBeacons = beaconRows.map((b) => buildBeaconMapItem(b, referenceDate));
+    let allEvents = (eventRes.data || []).map(toEvent).map((e) => buildCommunityEventMapItem(e, referenceDate));
+    let allAustinIndex = austinIndexRows
+      .map((row) => toAustinIndexMarker(row, windowsByEntry.get(row.id) || [], referenceDate))
+      .filter(Boolean);
 
     if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
       const miles = radius || 25;
       const near = (item) => withinRadius(item, latitude, longitude, miles);
-      foodBanks = foodBanks.filter(near);
-      beacons = beacons.filter(near);
-      events = events.filter(near);
-      austinIndex = austinIndex.filter((item) => (
+      allFoodBanks = allFoodBanks.filter(near);
+      allBeacons = allBeacons.filter(near);
+      allEvents = allEvents.filter(near);
+      allAustinIndex = allAustinIndex.filter((item) => (
         withinRadius({ latitude: item.lat, longitude: item.lng }, latitude, longitude, miles)
       ));
     }
 
+    const partitioned = partitionLiveFeedItems({
+      foodBanks: allFoodBanks,
+      beacons: allBeacons,
+      events: allEvents,
+      austinIndex: allAustinIndex,
+    }, referenceDate);
+
     return {
       data: {
-        foodBanks,
-        beacons,
-        events,
-        austinIndex,
-        userBeacon: mine ? buildBeaconMapItem(mine, now) : null,
+        ...partitioned,
+        referenceTime: referenceDate.toISOString(),
+        userBeacon: mine ? buildBeaconMapItem(mine, referenceDate) : null,
       },
     };
   },
@@ -210,15 +268,16 @@ export const foodBeaconService = {
     return data ? toBeacon(data) : null;
   },
 
-  async getAll() {
+  async getAll(params = {}) {
     const beacons = await fetchLiveBeacons();
-    const now = new Date();
-    return { data: { beacons: beacons.map((b) => buildBeaconMapItem(b, now)) } };
+    const referenceDate = resolveReferenceInstant(params);
+    return { data: { beacons: beacons.map((b) => buildBeaconMapItem(b, referenceDate)) } };
   },
 
-  async getMine() {
+  async getMine(params = {}) {
     const beacon = await this.getMineRaw();
-    return { data: { beacon: beacon ? buildBeaconMapItem(beacon) : null } };
+    const referenceDate = resolveReferenceInstant(params);
+    return { data: { beacon: beacon ? buildBeaconMapItem(beacon, referenceDate) : null } };
   },
 
   async upsertMine(payload) {

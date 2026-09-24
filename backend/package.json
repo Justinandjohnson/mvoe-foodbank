@@ -11,6 +11,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "node prisma/seed.js",
+    "availability:backfill": "node scripts/backfill-food-availability.mjs",
+    "availability:backfill:apply": "node scripts/backfill-food-availability.mjs --apply",
     "test": "jest",
     "lint": "eslint src/"
   },

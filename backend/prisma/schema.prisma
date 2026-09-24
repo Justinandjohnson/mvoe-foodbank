@@ -20,8 +20,14 @@ enum VenueType {
   pantry
   community_fridge
   meal
+  pop_up
   program
   event
+}
+
+enum AvailabilityWindowKind {
+  recurring
+  date_specific
 }
 
 // Where an entry came from. Keeps a person's on-the-map beacon strictly separate from
@@ -514,6 +520,7 @@ model FoodBankDirectoryEntry {
   organization  Organization?             @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   changes       FoodBankDirectoryChange[]
   sourceRecords FoodBankSourceRecord[]
+  availabilityWindows FoodBankAvailabilityWindow[]
 
   @@index([regionId])
   @@index([discoveryStatus, reviewStatus])
@@ -525,6 +532,29 @@ model FoodBankDirectoryEntry {
   @@index([regionId, origin, venueType, discoveryStatus])
   @@index([normalizedFingerprint])
   @@map("food_bank_directory_entries")
+}
+
+model FoodBankAvailabilityWindow {
+  id                String                 @id @default(uuid())
+  entryId           String                 @map("entry_id")
+  kind              AvailabilityWindowKind
+  category          VenueType
+  dayOfWeek         Int?                   @map("day_of_week")
+  specificDate      DateTime?              @map("specific_date") @db.Date
+  startMinute       Int                    @map("start_minute")
+  endMinute         Int                    @map("end_minute")
+  timezone          String                 @default("America/Chicago")
+  recurrenceOrdinal Int?                   @map("recurrence_ordinal")
+  sourceText        String?                @map("source_text")
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+
+  entry FoodBankDirectoryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId], map: "food_availability_entry_idx")
+  @@index([kind, category, dayOfWeek, startMinute, endMinute], map: "food_availability_recurring_idx")
+  @@index([kind, specificDate, category, startMinute, endMinute], map: "food_availability_date_idx")
+  @@map("food_bank_availability_windows")
 }
 
 model FoodBankDirectoryChange {
